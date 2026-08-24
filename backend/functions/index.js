@@ -7,11 +7,13 @@ const db = admin.firestore();
 const rtdb = admin.database();
 
 const verifyAdmin = async (uid) => {
-  // BYPASS FOR LOCAL EMULATOR TESTING
+  // 1. THIS IS THE BYPASS: Automatically approve if running locally
   if (process.env.FUNCTIONS_EMULATOR === "true") {
-    return; // Skips strict auth checks locally
+    console.log("Local emulator detected: Bypassing auth check");
+    return; 
   }
 
+  // 2. Normal strict security for production servers
   const userSnap = await db.collection("users").doc(uid).get();
   if (!userSnap.exists || userSnap.data().role !== "admin") {
     throw new functions.https.HttpsError(
@@ -414,57 +416,60 @@ exports.listIPO = functions.https.onCall(async (data, context) => {
 
 exports.adminSetMarketStatus = functions.https.onCall(
   async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError(
-        "unauthenticated",
-        "Unauthorized",
-      );
+    if (process.env.FUNCTIONS_EMULATOR !== "true" && !context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "Unauthorized");
     }
-    await verifyAdmin(context.auth.uid);
-    await rtdb.ref("marketStatus/state").set(data.status);
-    return {success: true};
+    await verifyAdmin(context.auth ? context.auth.uid : "local-bypass");
+
+    // EXTRACTOR: Gracefully handle whether 'data' is a string or an object
+    let statusValue = data;
+    if (typeof data === "object" && data !== null) {
+      statusValue = data.status || data.marketStatus || data.state;
+    }
+
+    // Force it to an uppercase string just in case
+    if (typeof statusValue === "string") {
+      statusValue = statusValue.trim().toUpperCase();
+    }
+
+    if (!["OPEN", "PAUSED", "CLOSED"].includes(statusValue)) {
+      throw new functions.https.HttpsError("invalid-argument", `Invalid market status state received: ${JSON.stringify(data)}`);
+    }
+
+    await rtdb.ref("marketStatus/state").set(statusValue);
+    return { success: true };
   },
 );
 
-exports.adminForceStockPrice = functions.https.onCall(
-  async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError(
-        "unauthenticated",
-        "Unauthorized",
-      );
+exports.adminForceStockPrice = functions.https.onCall(async (data, context) => {
+    if (process.env.FUNCTIONS_EMULATOR !== "true" && !context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "Unauthorized");
     }
-    await verifyAdmin(context.auth.uid);
+    await verifyAdmin(context.auth ? context.auth.uid : "local-bypass");
+    
     const {ticker, price} = data;
     if (typeof ticker !== "string" || !/^[A-Z0-9]+$/.test(ticker)) {
-      throw new functions.https.HttpsError(
-        "invalid-argument",
-        "Invalid ticker",
-      );
+      throw new functions.https.HttpsError("invalid-argument", "Invalid ticker");
     }
+    
     await rtdb.ref(`livePrices/${ticker}`).update({
       price: Number(price),
       timestamp: Date.now(),
     });
     return {success: true};
-  },
-);
+});
 
-exports.adminToggleUserFreeze = functions.https.onCall(
-  async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError(
-        "unauthenticated",
-        "Unauthorized",
-      );
+exports.adminToggleUserFreeze = functions.https.onCall(async (data, context) => {
+    if (process.env.FUNCTIONS_EMULATOR !== "true" && !context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "Unauthorized");
     }
-    await verifyAdmin(context.auth.uid);
+    await verifyAdmin(context.auth ? context.auth.uid : "local-bypass");
+    
     await db.collection("users").doc(data.uid).update({
       isFrozen: data.isFrozen,
     });
     return {success: true};
-  },
-);
+});
 
 exports.adminReleaseNews = functions.https.onCall(async (data, context) => {
   if (!context.auth) {

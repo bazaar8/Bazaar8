@@ -1,14 +1,18 @@
 import { useState } from "react";
 import { useAdminData } from "../hooks/useAdminData";
+import { useAuth } from "../context/AuthContext";
 import { setMarketStatus, toggleUserFreeze, forceStockPrice } from "../services/adminService";
 import { 
   LayoutDashboard, Activity, Users, Newspaper, ListOrdered, 
-  Trophy, Sparkles, Server, Settings, Power, Pause, Play, ShieldAlert, Upload, Mail
+  Trophy, Sparkles, Server, Settings, Power, Pause, Play, ShieldAlert, Upload, Mail,
+  LogOut
 } from "lucide-react";
+
 
 type Tab = 'dashboard' | 'market' | 'participants' | 'news' | 'orders' | 'stocks' | 'leaderboard' | 'ipo' | 'system' | 'settings';
 
 export default function AdminDashboard() {
+  const { logoutUser } = useAuth();
   const { users, orders, newsEvents, marketState } = useAdminData();
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [forceTicker, setForceTicker] = useState("");
@@ -69,6 +73,15 @@ export default function AdminDashboard() {
             )
           })}
         </nav>
+        <div className="p-2 md:p-3 border-t border-[var(--border-subtle)]">
+          <button
+            onClick={() => logoutUser()}
+            className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[10px] font-bold tracking-widest uppercase text-[var(--down-color)] hover:bg-[#f2364515] transition-colors rounded text-left"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Sign Out
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 p-4 md:p-6 overflow-x-hidden min-w-0">
@@ -84,7 +97,7 @@ export default function AdminDashboard() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:gap-4">
                 <div className="terminal-card p-4">
                   <div className="text-[var(--text-muted)] text-[10px] font-bold uppercase tracking-wider mb-1">Engine Status</div>
-                  <div className={`text-xl font-bold font-mono ${marketState === 'OPEN' ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
+                  <div className={`text-xl font-bold  MKfont-mono ${marketState === 'OPEN' ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
                     {marketState}
                   </div>
                 </div>

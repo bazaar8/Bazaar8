@@ -1,11 +1,9 @@
-import { getFunctions, httpsCallable } from "firebase/functions";
-import { app } from "../config/firebase";
-
-const functions = getFunctions(app);
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../config/firebase"; // Only import the one we configured
 
 export const setMarketStatus = async (status: 'OPEN' | 'PAUSED' | 'CLOSED') => {
   const setStatusFn = httpsCallable(functions, 'adminSetMarketStatus');
-  await setStatusFn({ status });
+  return await setStatusFn({ status });
 };
 
 export const toggleUserFreeze = async (uid: string, isFrozen: boolean) => {

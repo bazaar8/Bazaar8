@@ -21,7 +21,7 @@ export const db = getFirestore(app);
 export const rtdb = getDatabase(app);
 export const functions = getFunctions(app);
 
-
-if (window.location.hostname === "localhost") {
+// HYBRID SETUP: Only Functions run locally, everything else uses Live Cloud
+if (import.meta.env.DEV) {
   connectFunctionsEmulator(functions, "localhost", 5001);
 }

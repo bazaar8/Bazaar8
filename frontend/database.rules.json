@@ -1,0 +1,18 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": false,
+    "livePrices": {
+      ".read": "auth != null"
+    },
+    "priceHistory": {
+      ".read": "auth != null"
+    },
+    "marketStatus": {
+      ".read": "auth != null"
+    },
+    "newsFeed": {
+      ".read": "auth != null"
+    }
+  }
+}

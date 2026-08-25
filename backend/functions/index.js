@@ -1,8 +1,13 @@
-const functions = require("firebase-functions");
+const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
 if (!admin.apps.length) {
-  admin.initializeApp();
+  admin.initializeApp({
+    databaseURL: "https://bazaar8-123-default-rtdb.asia-southeast1.firebasedatabase.app/"
+  });
 }
+console.log("Apps initialized:", admin.apps.length);
+console.log("Actual databaseURL in use:", admin.app().options.databaseURL);
+
 const db = admin.firestore();
 const rtdb = admin.database();
 
@@ -421,22 +426,26 @@ exports.adminSetMarketStatus = functions.https.onCall(
     }
     await verifyAdmin(context.auth ? context.auth.uid : "local-bypass");
 
-    // EXTRACTOR: Gracefully handle whether 'data' is a string or an object
     let statusValue = data;
     if (typeof data === "object" && data !== null) {
       statusValue = data.status || data.marketStatus || data.state;
     }
 
-    // Force it to an uppercase string just in case
     if (typeof statusValue === "string") {
       statusValue = statusValue.trim().toUpperCase();
     }
 
     if (!["OPEN", "PAUSED", "CLOSED"].includes(statusValue)) {
-      throw new functions.https.HttpsError("invalid-argument", `Invalid market status state received: ${JSON.stringify(data)}`);
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        `Invalid market status state received: ${typeof statusValue}`
+      );
     }
 
+    console.log("Writing status:", statusValue, "to path marketStatus/state");
     await rtdb.ref("marketStatus/state").set(statusValue);
+    console.log("Write completed");
+
     return { success: true };
   },
 );

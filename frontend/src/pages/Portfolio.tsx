@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom";
 import { useUserTradingData } from "../hooks/useUserTradingData";
 import { useLivePrices } from "../hooks/useLivePrices";
+import { useAuth } from "../context/AuthContext"; // <-- Added to get the user's email
 import { PieChart, TrendingUp, TrendingDown, ArrowRight, ListOrdered } from "lucide-react";
 
 export default function Portfolio() {
+  const { profile } = useAuth(); // <-- Extract profile for the PDF
   const { cashBalance, startingBalance, longHoldings, shortHoldings, recentOrders, loading } = useUserTradingData();
   const { prices, marketStatus } = useLivePrices();
 
@@ -15,30 +17,115 @@ export default function Portfolio() {
     );
   }
 
+  // Bulletproof math to catch and heal 'NaN' database corruption
+  const safeCash = isNaN(Number(cashBalance)) ? 0 : Number(cashBalance);
+  const safeStarting = isNaN(Number(startingBalance)) || Number(startingBalance) === 0 ? 1000000 : Number(startingBalance);
+
   const longMarketValue = longHoldings.reduce((sum, h) => {
-    const p = prices[h.ticker]?.price ?? h.avgPrice;
-    return sum + h.quantity * p;
+    const p = Number(prices[h.ticker]?.price ?? h.avgPrice) || 0;
+    const q = Number(h.quantity) || 0;
+    return sum + (q * p);
   }, 0);
 
   const shortLiability = shortHoldings.reduce((sum, h) => {
-    const p = prices[h.ticker]?.price ?? h.avgPrice;
-    return sum + h.quantity * p;
+    const p = Number(prices[h.ticker]?.price ?? h.avgPrice) || 0;
+    const q = Number(h.quantity) || 0;
+    return sum + (q * p);
   }, 0);
 
-  const totalPortfolioValue = cashBalance + longMarketValue - shortLiability;
-  const totalPL = totalPortfolioValue - startingBalance;
-  const returnPct = (totalPL / startingBalance) * 100;
+  const totalPortfolioValue = safeCash + longMarketValue - shortLiability;
+  const totalPL = totalPortfolioValue - safeStarting;
+  const returnPct = (totalPL / safeStarting) * 100;
 
-  const chartTotal = longMarketValue + cashBalance + shortLiability || 1;
+  const chartTotal = Math.max(1, safeCash + longMarketValue + shortLiability);
   const eqPct = (longMarketValue / chartTotal) * 100;
-  const cashPct = (cashBalance / chartTotal) * 100;
+  const cashPct = (safeCash / chartTotal) * 100;
   const shortPct = (shortLiability / chartTotal) * 100;
 
-  const eqDash = `${eqPct} 100`;
-  const cashDash = `${cashPct} 100`;
-  const shortDash = `${shortPct} 100`;
-  const cashOffset = 25 - eqPct;
-  const shortOffset = cashOffset - cashPct;
+  // SVG PIE CHART MATH
+  const eqDash = `${eqPct} ${100 - eqPct}`;
+  const cashDash = `${cashPct} ${100 - cashPct}`;
+  const shortDash = `${shortPct} ${100 - shortPct}`;
+
+  const eqOffset = 0;
+  const cashOffset = 100 - eqPct;
+  const shortOffset = 100 - (eqPct + cashPct);
+
+  // FIXED PDF EXPORT FUNCTION
+  const handleExportPDF = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("Please allow popups to export PDF.");
+      return;
+    }
+
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Transaction Statement - MarketSim</title>
+          <style>
+            body { font-family: 'Courier New', Courier, monospace; padding: 40px; color: #111; }
+            h1 { text-align: center; border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 30px; }
+            .header-info { display: flex; justify-content: space-between; margin-bottom: 30px; font-size: 14px; }
+            table { w-full; width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
+            th { border-bottom: 2px solid #111; padding: 10px; text-align: left; background-color: #f4f4f4; }
+            td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
+            .right { text-align: right; }
+            .buy { color: #089981; font-weight: bold; }
+            .sell { color: #f23645; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <h1>OFFICIAL TRANSACTION STATEMENT</h1>
+          <div class="header-info">
+            <div>
+              <strong>Trader Email:</strong> ${profile?.email || 'N/A'}<br/>
+              <strong>Export Date:</strong> ${new Date().toLocaleString()}
+            </div>
+            <div class="right">
+              <strong>Final Net Worth:</strong> ₹${totalPortfolioValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}<br/>
+              <strong>Available Cash:</strong> ₹${safeCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>TIMESTAMP</th>
+                <th>TICKER</th>
+                <th>ACTION</th>
+                <th class="right">QUANTITY</th>
+                <th class="right">EXEC PRICE</th>
+                <th class="right">TOTAL VALUE</th>
+                <th>STATUS</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${recentOrders.map((o: any) => `
+                <tr>
+                  <td>${new Date(o.timestamp?.toMillis ? o.timestamp.toMillis() : o.timestamp).toLocaleString()}</td>
+                  <td><strong>${o.ticker}</strong></td>
+                  <td class="${['BUY', 'COVER'].includes(o.side) ? 'buy' : 'sell'}">${o.side}</td>
+                  <td class="right">${o.quantity}</td>
+                  <td class="right">₹${Number(o.priceAtExecution).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                  <td class="right">₹${(o.quantity * o.priceAtExecution).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                  <td>${o.status.toUpperCase()}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
+  };
+
 
   return (
     <div className="flex flex-col gap-4 lg:gap-6">
@@ -59,19 +146,17 @@ export default function Portfolio() {
           <div className="text-xl lg:text-2xl font-bold font-mono text-[var(--text-main)]">
             ₹{totalPortfolioValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">Base: ₹{startingBalance.toLocaleString("en-IN")}</div>
+          <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">Base: ₹{safeStarting.toLocaleString("en-IN")}</div>
         </div>
-
         <div className="terminal-card p-4">
           <div className="flex justify-between items-center text-[var(--text-muted)] text-[10px] uppercase font-bold mb-1">
             <span>Available Cash</span>
           </div>
           <div className="text-xl lg:text-2xl font-bold font-mono text-[var(--text-main)]">
-            ₹{cashBalance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ₹{safeCash.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">Unallocated Margin</div>
         </div>
-
         <div className="terminal-card p-4">
           <div className="flex justify-between items-center text-[var(--text-muted)] text-[10px] uppercase font-bold mb-1">
             <span>Net P&L</span>
@@ -82,7 +167,6 @@ export default function Portfolio() {
           </div>
           <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">Realized & Active</div>
         </div>
-
         <div className="terminal-card p-4">
           <div className="flex justify-between items-center text-[var(--text-muted)] text-[10px] uppercase font-bold mb-1">
             <span>Return %</span>
@@ -102,7 +186,7 @@ export default function Portfolio() {
           <div className="relative w-40 h-40 mt-8 mb-4">
             <svg viewBox="0 0 32 32" className="w-full h-full -rotate-90 transform rounded-full">
               <circle cx="16" cy="16" r="15.9155" fill="none" stroke="var(--bg-root)" strokeWidth="4" />
-              <circle cx="16" cy="16" r="15.9155" fill="none" stroke="#3b82f6" strokeWidth="4" strokeDasharray={eqDash} strokeDashoffset="25" className="transition-all duration-1000 ease-out" />
+              <circle cx="16" cy="16" r="15.9155" fill="none" stroke="#3b82f6" strokeWidth="4" strokeDasharray={eqDash} strokeDashoffset={eqOffset} className="transition-all duration-1000 ease-out" />
               <circle cx="16" cy="16" r="15.9155" fill="none" stroke="var(--up-color)" strokeWidth="4" strokeDasharray={cashDash} strokeDashoffset={cashOffset} className="transition-all duration-1000 ease-out" />
               <circle cx="16" cy="16" r="15.9155" fill="none" stroke="var(--down-color)" strokeWidth="4" strokeDasharray={shortDash} strokeDashoffset={shortOffset} className="transition-all duration-1000 ease-out" />
             </svg>
@@ -143,6 +227,12 @@ export default function Portfolio() {
               <ListOrdered className="w-4 h-4 text-[var(--text-main)]" />
               <span className="text-xs font-bold text-[var(--text-main)] uppercase tracking-widest">Recent Executions</span>
             </div>
+            <button 
+              onClick={handleExportPDF}
+              className="px-3 py-1.5 bg-[#3b82f6] hover:opacity-90 text-white text-[10px] font-bold uppercase rounded shadow-sm transition-opacity"
+            >
+              Export PDF
+            </button>
             <Link to="/orders" className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text-main)] font-mono uppercase flex items-center gap-1 transition-colors">
               All Orders <ArrowRight className="w-3 h-3" />
             </Link>
@@ -172,7 +262,7 @@ export default function Portfolio() {
                       </td>
                       <td className="px-4 py-3 font-bold text-[var(--text-main)]">{o.ticker}</td>
                       <td className="px-4 py-3 text-right text-[var(--text-main)]">{o.quantity}</td>
-                      <td className="px-4 py-3 text-right text-[var(--text-main)]">₹{o.priceAtExecution?.toFixed(2) || "0.00"}</td>
+                      <td className="px-4 py-3 text-right text-[var(--text-main)]">₹{Number(o.priceAtExecution)?.toFixed(2) || "0.00"}</td>
                       <td className="px-4 py-3 text-right">
                         <span className={`px-2 py-0.5 text-[9px] uppercase font-bold rounded ${o.status === "completed" ? "bg-[#08998115] text-[var(--up-color)]" : "bg-[#f2364515] text-[var(--down-color)]"}`}>
                           {o.status}
@@ -188,7 +278,6 @@ export default function Portfolio() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6 mt-2">
-        
         <div className="terminal-card overflow-hidden">
           <div className="p-4 border-b border-[var(--border-subtle)] bg-[var(--bg-root)]">
             <span className="text-xs font-bold text-[var(--up-color)] uppercase tracking-widest">Long Holdings (Assets)</span>
@@ -208,15 +297,15 @@ export default function Portfolio() {
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {longHoldings.map((h) => {
-                    const live = prices[h.ticker]?.price ?? h.avgPrice;
-                    const pl = (live - h.avgPrice) * h.quantity;
+                    const live = Number(prices[h.ticker]?.price ?? h.avgPrice) || 0;
+                    const pl = (live - (Number(h.avgPrice) || 0)) * (Number(h.quantity) || 0);
                     return (
                       <tr key={h.ticker} className="hover:bg-[var(--bg-root)] transition-colors">
                         <td className="px-4 py-3 font-bold">
                           <Link to={`/stocks/${h.ticker}`} className="text-[var(--text-main)] hover:text-[var(--up-color)]">{h.ticker}</Link>
                         </td>
                         <td className="px-4 py-3 text-right text-[var(--text-main)]">{h.quantity}</td>
-                        <td className="px-4 py-3 text-right text-[var(--text-muted)]">₹{h.avgPrice.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right text-[var(--text-muted)]">₹{Number(h.avgPrice).toFixed(2)}</td>
                         <td className={`px-4 py-3 text-right font-bold ${pl >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
                           {pl >= 0 ? "+" : ""}₹{pl.toFixed(2)}
                         </td>
@@ -248,15 +337,15 @@ export default function Portfolio() {
                 </thead>
                 <tbody className="divide-y divide-[var(--border-subtle)]">
                   {shortHoldings.map((h) => {
-                    const live = prices[h.ticker]?.price ?? h.avgPrice;
-                    const pl = (h.avgPrice - live) * h.quantity;
+                    const live = Number(prices[h.ticker]?.price ?? h.avgPrice) || 0;
+                    const pl = ((Number(h.avgPrice) || 0) - live) * (Number(h.quantity) || 0);
                     return (
                       <tr key={h.ticker} className="hover:bg-[var(--bg-root)] transition-colors">
                         <td className="px-4 py-3 font-bold">
                           <Link to={`/stocks/${h.ticker}`} className="text-[var(--text-main)] hover:text-[var(--down-color)]">{h.ticker}</Link>
                         </td>
                         <td className="px-4 py-3 text-right text-[var(--text-main)]">{h.quantity}</td>
-                        <td className="px-4 py-3 text-right text-[var(--text-muted)]">₹{h.avgPrice.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right text-[var(--text-muted)]">₹{Number(h.avgPrice).toFixed(2)}</td>
                         <td className={`px-4 py-3 text-right font-bold ${pl >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
                           {pl >= 0 ? "+" : ""}₹{pl.toFixed(2)}
                         </td>
@@ -268,7 +357,6 @@ export default function Portfolio() {
             )}
           </div>
         </div>
-
       </div>
     </div>
   );

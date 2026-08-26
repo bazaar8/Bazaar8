@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import { ref, onValue, query, limitToLast } from "firebase/database";
+import { rtdb } from "../config/firebase";
 
 interface CustomStockChartProps {
   ticker: string;
@@ -12,29 +14,39 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
   const [hoverData, setHoverData] = useState<{ time: string; price: number; x: number; y: number } | null>(null);
 
   useEffect(() => {
-    const initial: { time: string; price: number }[] = [];
-    const now = Date.now();
-    let p = basePrice;
-    
-    for (let i = 30; i >= 0; i--) {
-      const t = new Date(now - i * 3000);
-      const timeStr = t.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      p += (Math.random() - 0.49) * (basePrice * 0.004);
-      initial.push({ time: timeStr, price: Number(p.toFixed(2)) });
-    }
-    initial.push({
-      time: new Date(now).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-      price: currentPrice
+    const historyRef = query(ref(rtdb, `priceHistory/${ticker}`), limitToLast(60));
+    const unsub = onValue(historyRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.val();
+        const parsed = Object.keys(data).map(ts => ({
+          timestamp: parseInt(ts, 10),
+          time: new Date(parseInt(ts, 10)).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+          price: data[ts]
+        })).sort((a, b) => a.timestamp - b.timestamp);
+        setHistory(parsed);
+      } else {
+         // THE FIX: Draw starting price if DB history is empty
+         setHistory([{ 
+           time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }), 
+           price: basePrice 
+         }]);
+      }
     });
-    setHistory(initial);
+    return () => unsub();
   }, [ticker, basePrice]);
 
   useEffect(() => {
-    if (!currentPrice) return;
+    if (!currentPrice || history.length === 0) return;
     const now = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     setHistory((prev) => {
-      const next = [...prev, { time: now, price: currentPrice }];
-      if (next.length > 50) return next.slice(next.length - 50);
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last && last.time === now) {
+        last.price = currentPrice;
+      } else {
+        next.push({ time: now, price: currentPrice });
+      }
+      if (next.length > 60) return next.slice(next.length - 60);
       return next;
     });
   }, [currentPrice]);
@@ -88,7 +100,7 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
     }
 
     const points = history.map((item, idx) => {
-      const x = (idx / (history.length - 1)) * chartWidth;
+      const x = (idx / Math.max(1, history.length - 1)) * chartWidth;
       const y = chartHeight - ((item.price - minPrice) / range) * chartHeight;
       return { x, y, ...item };
     });
@@ -157,7 +169,6 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
       ctx.setLineDash([2, 2]);
       ctx.strokeStyle = isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)";
       ctx.lineWidth = 1;
-
       ctx.beginPath();
       ctx.moveTo(hoverData.x, 0);
       ctx.lineTo(hoverData.x, chartHeight);
@@ -193,8 +204,8 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
     const minPrice = Math.min(...prices) * 0.998;
     const maxPrice = Math.max(...prices) * 1.002;
     const range = maxPrice - minPrice || 1;
-    const y = chartHeight - ((item.price - minPrice) / range) * chartHeight;
 
+    const y = chartHeight - ((item.price - minPrice) / range) * chartHeight;
     setHoverData({ time: item.time, price: item.price, x, y });
   };
 
@@ -207,7 +218,7 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)] text-xs font-mono">
         <div className="flex items-center gap-4">
           <span className="font-bold text-[var(--text-main)]">{ticker} Live Feed</span>
-          <span className="text-[var(--text-muted)]">Interval: 3s</span>
+          <span className="text-[var(--text-muted)]">Interval: 12s</span>
           {hoverData && (
             <span className="text-[var(--text-main)]">
               Hover: <strong className="text-[var(--up-color)]">₹{hoverData.price.toFixed(2)}</strong> ({hoverData.time})
@@ -219,7 +230,6 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
           <span>INTERNAL RTDB SYNC</span>
         </div>
       </div>
-
       <div className="relative flex-1 w-full min-h-[380px]">
         <canvas
           ref={canvasRef}

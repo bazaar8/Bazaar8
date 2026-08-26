@@ -62,5 +62,8 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
+    match /adminLogs/{logId} {
+      allow read, write: if request.auth != null;
+    }
   }
 }

@@ -15,6 +15,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import Login from './pages/Login';
 import Watchlists from './pages/Watchlists';
 import Register from './pages/Register';
+import TVLeaderboard from './pages/TVLeaderboard';
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/tv" element={<TVLeaderboard />} />
           
           {/* Students are locked inside ProtectedRoute and pushed to MainLayout */}
           <Route element={<ProtectedRoute />}>

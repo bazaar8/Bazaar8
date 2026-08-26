@@ -1,6 +1,6 @@
 {
   "rules": {
-    ".read": "auth != null",
+    ".read": false,
     ".write": false,
     "livePrices": {
       ".read": "auth != null"
@@ -13,6 +13,9 @@
     },
     "newsFeed": {
       ".read": "auth != null"
+    },
+    "marketInfluence": {
+      ".read": false
     }
   }
 }

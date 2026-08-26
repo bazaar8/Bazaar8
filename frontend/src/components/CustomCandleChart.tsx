@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import { ref, onValue, query, limitToLast } from "firebase/database";
+import { rtdb } from "../config/firebase";
 
 interface CustomCandleChartProps {
   ticker: string;
@@ -19,60 +21,70 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
   const [candles, setCandles] = useState<Candle[]>([]);
   const [hoverData, setHoverData] = useState<{ time: string; price: number; x: number; y: number } | null>(null);
 
+  // 1. Fetch data and build 3-Minute Candles
   useEffect(() => {
-    const initial: Candle[] = [];
-    const now = Date.now();
-    let p = basePrice;
-    
-    for (let i = 50; i > 0; i--) {
-      const t = new Date(now - i * 5000);
-      const open = p;
-      const close = p + (Math.random() - 0.49) * (basePrice * 0.006);
-      const high = Math.max(open, close) + Math.random() * (basePrice * 0.002);
-      const low = Math.min(open, close) - Math.random() * (basePrice * 0.002);
-      
-      initial.push({
-        time: t.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        open, high, low, close
-      });
-      p = close;
-    }
-    
-    initial.push({
-      time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-      open: p, high: Math.max(p, currentPrice), low: Math.min(p, currentPrice), close: currentPrice
+    // Fetch last 900 ticks (approx 3 hours of 12-second ticks) to fill the 60-candle view
+    const historyRef = query(ref(rtdb, `priceHistory/${ticker}`), limitToLast(900));
+    const unsub = onValue(historyRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.val();
+        const rawTicks = Object.keys(data).map(ts => ({
+          ts: parseInt(ts, 10),
+          price: data[ts]
+        })).sort((a, b) => a.ts - b.ts);
+
+        const bucketSize = 180000; // EXACTLY 3 MINUTES
+        const grouped = new Map<number, number[]>();
+        
+        rawTicks.forEach(tick => {
+          const bucket = Math.floor(tick.ts / bucketSize) * bucketSize;
+          if (!grouped.has(bucket)) grouped.set(bucket, []);
+          grouped.get(bucket)!.push(tick.price);
+        });
+
+        const processedCandles: Candle[] = [];
+        const sortedBuckets = Array.from(grouped.keys()).sort();
+
+        sortedBuckets.forEach(bucketTs => {
+          const prices = grouped.get(bucketTs)!;
+          const open = prices[0];
+          const close = prices[prices.length - 1];
+          const high = Math.max(...prices);
+          const low = Math.min(...prices);
+          processedCandles.push({
+            time: new Date(bucketTs).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+            open, high, low, close
+          });
+        });
+
+        if (processedCandles.length > 0) {
+          setCandles(processedCandles);
+        }
+      } else {
+        setCandles([{
+          time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+          open: basePrice, high: basePrice, low: basePrice, close: basePrice
+        }]);
+      }
     });
-    
-    setCandles(initial);
+    return () => unsub();
   }, [ticker, basePrice]);
 
+  // 2. Push live updates to the current active candle
   useEffect(() => {
     if (!currentPrice || candles.length === 0) return;
-    
     setCandles((prev) => {
       const next = [...prev];
       const last = { ...next[next.length - 1] };
-      
       last.close = currentPrice;
       if (currentPrice > last.high) last.high = currentPrice;
       if (currentPrice < last.low) last.low = currentPrice;
-      
       next[next.length - 1] = last;
-
-      const timeParts = last.time.split(":");
-      const seconds = parseInt(timeParts[2]);
-      if (seconds % 5 === 0 && prev.length % 5 !== 0) {
-        if (next.length > 60) next.shift();
-        next.push({
-          time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          open: currentPrice, high: currentPrice, low: currentPrice, close: currentPrice
-        });
-      }
-      
       return next;
     });
   }, [currentPrice]);
 
+  // 3. Draw the canvas (Right-aligned standard layout)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
@@ -94,6 +106,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
 
     ctx.clearRect(0, 0, width, height);
 
+    // Calculate Y-Axis bounds
     const prices = candles.flatMap((c) => [c.high, c.low]);
     const minPrice = Math.min(...prices) * 0.998;
     const maxPrice = Math.max(...prices) * 1.002;
@@ -105,6 +118,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     const upColor = "#089981";
     const downColor = "#f23645";
 
+    // Draw horizontal grid lines
     ctx.strokeStyle = gridColor;
     ctx.lineWidth = 1;
     for (let i = 0; i <= 5; i++) {
@@ -121,10 +135,18 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       ctx.fillText(priceVal.toFixed(2), chartWidth + 8, y + 4);
     }
 
-    const candleWidth = Math.max(2, (chartWidth / candles.length) * 0.6);
-    
+    // X-Axis Scale Math (Locks chart to 60 visible slots, aligned right)
+    const maxVisibleCandles = 60;
+    const xSpace = chartWidth / maxVisibleCandles;
+    const candleWidth = Math.max(4, xSpace * 0.6); // Lock max width so it never balloons
+
     candles.forEach((candle, idx) => {
-      const x = (idx / Math.max(1, candles.length - 1)) * (chartWidth - 20) + 10;
+      // Shift calculation from left-aligned to right-aligned
+      const distanceFromRight = (candles.length - 1 - idx) * xSpace;
+      const x = chartWidth - 15 - distanceFromRight;
+
+      if (x < 0) return; // Hide candles that scroll off the left edge
+
       const yOpen = chartHeight - ((candle.open - minPrice) / range) * chartHeight;
       const yClose = chartHeight - ((candle.close - minPrice) / range) * chartHeight;
       const yHigh = chartHeight - ((candle.high - minPrice) / range) * chartHeight;
@@ -133,6 +155,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       const isUp = candle.close >= candle.open;
       const color = isUp ? upColor : downColor;
 
+      // Draw Wick
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -140,12 +163,14 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       ctx.lineTo(x, yLow);
       ctx.stroke();
 
+      // Draw Body
       ctx.fillStyle = color;
       const rectY = Math.min(yOpen, yClose);
       const rectH = Math.max(1, Math.abs(yOpen - yClose));
       ctx.fillRect(x - candleWidth / 2, rectY, candleWidth, rectH);
     });
 
+    // Draw Current Live Price Marker
     const last = candles[candles.length - 1];
     const lastY = chartHeight - ((last.close - minPrice) / range) * chartHeight;
     const lastColor = last.close >= last.open ? upColor : downColor;
@@ -165,11 +190,11 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     ctx.textAlign = "left";
     ctx.fillText(last.close.toFixed(2), chartWidth + 6, lastY + 3);
 
+    // Draw Hover Crosshair
     if (hoverData) {
       ctx.setLineDash([2, 2]);
       ctx.strokeStyle = isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)";
       ctx.lineWidth = 1;
-
       ctx.beginPath();
       ctx.moveTo(hoverData.x, 0);
       ctx.lineTo(hoverData.x, chartHeight);
@@ -180,32 +205,39 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     }
   }, [candles, hoverData]);
 
+  // Hover Interaction Mapper (Re-mapped for right-alignment)
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
+    const mouseX = e.clientX - rect.left;
     const chartWidth = rect.width - 60;
     const chartHeight = rect.height - 24;
 
-    if (x < 0 || x > chartWidth) {
+    if (mouseX < 0 || mouseX > chartWidth) {
       setHoverData(null);
       return;
     }
 
-    const index = Math.min(
-      candles.length - 1,
-      Math.max(0, Math.round((x / chartWidth) * (candles.length - 1)))
-    );
-    const item = candles[index];
+    const maxVisibleCandles = 60;
+    const xSpace = chartWidth / maxVisibleCandles;
+    const distanceFromRightPx = chartWidth - 15 - mouseX;
+    const candlesFromRight = Math.round(distanceFromRightPx / xSpace);
+    const index = candles.length - 1 - candlesFromRight;
 
-    const prices = candles.flatMap((c) => [c.high, c.low]);
-    const minPrice = Math.min(...prices) * 0.998;
-    const maxPrice = Math.max(...prices) * 1.002;
-    const range = maxPrice - minPrice || 1;
-    const y = chartHeight - ((item.close - minPrice) / range) * chartHeight;
+    if (index >= 0 && index < candles.length) {
+      const item = candles[index];
+      const prices = candles.flatMap((c) => [c.high, c.low]);
+      const minPrice = Math.min(...prices) * 0.998;
+      const maxPrice = Math.max(...prices) * 1.002;
+      const range = maxPrice - minPrice || 1;
 
-    setHoverData({ time: item.time, price: item.close, x, y });
+      const snappedX = chartWidth - 15 - (candlesFromRight * xSpace);
+      const y = chartHeight - ((item.close - minPrice) / range) * chartHeight;
+      setHoverData({ time: item.time, price: item.close, x: snappedX, y });
+    } else {
+      setHoverData(null);
+    }
   };
 
   const handleMouseLeave = () => setHoverData(null);
@@ -215,7 +247,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)] text-xs font-mono">
         <div className="flex items-center gap-4">
           <span className="font-bold text-[var(--text-main)]">{ticker} Live Feed</span>
-          <span className="text-[var(--text-muted)] border px-1 border-[var(--border-subtle)] rounded">5s</span>
+          <span className="text-[var(--text-muted)] border px-1 border-[var(--border-subtle)] rounded">3M</span>
           {hoverData && (
             <span className="text-[var(--text-main)]">
               Hover: <strong className={hoverData.price >= basePrice ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
@@ -229,7 +261,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
           <span>SYNCED</span>
         </div>
       </div>
-
       <div className="relative flex-1 w-full min-h-[380px]">
         <canvas
           ref={canvasRef}

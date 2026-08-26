@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
 
 export interface LeaderboardEntry {
@@ -12,26 +12,39 @@ export interface LeaderboardEntry {
 
 export function useLeaderboard() {
   const [rankings, setRankings] = useState<LeaderboardEntry[]>([]);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [countdown, setCountdown] = useState(30);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'leaderboard', 'main'), (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
-        setRankings(data.rankings || []);
-        if (data.lastUpdated) {
-          setLastUpdated(data.lastUpdated.toDate());
-        }
+  const fetchLeaderboard = async () => {
+    try {
+      const snap = await getDoc(doc(db, 'leaderboard', 'main'));
+      if (snap.exists()) {
+        setRankings(snap.data().rankings || []);
       }
-      setLoading(false);
-    }, (error) => {
+    } catch (error) {
       console.warn("Leaderboard restricted:", error);
-      setLoading(false); // <-- Safely stops the crash loop
-    });
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return () => unsub();
+  useEffect(() => {
+    // Initial fetch
+    fetchLeaderboard();
+
+    // Strict 30-second countdown loop
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          fetchLeaderboard();
+          return 30; // Reset countdown
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
   }, []);
 
-  return { rankings, lastUpdated, loading };
+  return { rankings, countdown, loading };
 }

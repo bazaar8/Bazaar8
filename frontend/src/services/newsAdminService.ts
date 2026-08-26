@@ -1,71 +1,38 @@
-import { collection, doc, setDoc, updateDoc } from "firebase/firestore";
-import { ref, set, update, remove } from "firebase/database";
-import { db, rtdb } from "../config/firebase";
-import type { NewsEventAdmin, NewsEventPublic, MarketInfluence } from "../types/news";
+import { collection, doc, setDoc } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import { db, app } from "../config/firebase";
+import type { NewsEventAdmin } from "../types/news";
 
-export const createAndScheduleEvent = async (event: Omit<NewsEventAdmin, "id" | "createdAt" | "status">) => {
-  const eventRef = doc(collection(db, "newsEvents"));
-  const eventId = eventRef.id;
-  const now = Date.now();
+const functions = getFunctions(app);
 
-  const adminData: NewsEventAdmin = {
-    ...event,
-    id: eventId,
-    status: 'scheduled',
-    createdAt: now
-  };
-
-  await setDoc(eventRef, adminData);
-  return eventId;
+// Imports remain direct to Firestore because firestore.rules allows admins to write here
+export const importNewsEvents = async (events: Omit<NewsEventAdmin, "id" | "createdAt" | "status" | "startTime">[]) => {
+  const promises = events.map(async (event) => {
+    const eventRef = doc(collection(db, "newsEvents"));
+    const adminData: NewsEventAdmin = {
+      ...event,
+      id: eventRef.id,
+      status: 'draft',
+      startTime: 0,
+      createdAt: Date.now()
+    };
+    await setDoc(eventRef, adminData);
+  });
+  await Promise.all(promises);
 };
 
-export const releaseEventNow = async (eventId: string, adminData: NewsEventAdmin) => {
-  const now = Date.now();
-  
-  const publicData: NewsEventPublic = {
-    id: eventId,
-    headline: adminData.headline,
-    description: adminData.description,
-    targetTickers: adminData.targetTickers,
-    affectedSectors: adminData.affectedSectors,
-    startTime: now
-  };
-
-  const influenceData: MarketInfluence = {
-    id: eventId,
-    targetTickers: adminData.targetTickers,
-    impactDirection: adminData.impactDirection,
-    impactStrength: adminData.impactStrength,
-    durationMinutes: adminData.durationMinutes,
-    startTime: now,
-    status: 'active'
-  };
-
-  const eventRef = doc(db, "newsEvents", eventId);
-  await updateDoc(eventRef, { status: 'active', startTime: now });
-
-  const publicFeedRef = ref(rtdb, `newsFeed/${eventId}`);
-  await set(publicFeedRef, publicData);
-
-  const influenceRef = ref(rtdb, `marketInfluence/${eventId}`);
-  await set(influenceRef, influenceData);
+// Actions routed securely through Cloud Functions
+export const releaseEventNow = async (eventId: string, adminData: NewsEventAdmin, durationMinutes: number) => {
+  const releaseFn = httpsCallable(functions, 'adminReleaseNews');
+  await releaseFn({ eventId, adminData, durationMinutes });
 };
 
 export const pauseEvent = async (eventId: string) => {
-  const eventRef = doc(db, "newsEvents", eventId);
-  await updateDoc(eventRef, { status: 'paused' });
-
-  const influenceRef = ref(rtdb, `marketInfluence/${eventId}`);
-  await update(influenceRef, { status: 'paused' });
+  const pauseFn = httpsCallable(functions, 'adminPauseNews');
+  await pauseFn({ eventId });
 };
 
 export const cancelEvent = async (eventId: string) => {
-  const eventRef = doc(db, "newsEvents", eventId);
-  await updateDoc(eventRef, { status: 'cancelled' });
-
-  const publicFeedRef = ref(rtdb, `newsFeed/${eventId}`);
-  await remove(publicFeedRef);
-
-  const influenceRef = ref(rtdb, `marketInfluence/${eventId}`);
-  await remove(influenceRef);
+  const cancelFn = httpsCallable(functions, 'adminCancelNews');
+  await cancelFn({ eventId });
 };

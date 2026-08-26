@@ -1,18 +1,99 @@
+import { useState, useEffect, useRef } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../hooks/useTheme';
-import { LogOut, Activity, Search, Bell, Sun, Moon, User } from 'lucide-react';
+import { useLivePrices } from '../hooks/useLivePrices';
+import { LogOut, Activity, Bell, Sun, Moon, User, X, Newspaper } from 'lucide-react';
+import { collection, query, limit, onSnapshot, orderBy, doc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 export default function MainLayout() {
   const { user, profile, logoutUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { isDark, toggleTheme } = useTheme();
+  const { marketStatus } = useLivePrices();
+  
+  const [activeNews, setActiveNews] = useState<any | null>(null);
+  const [showNotification, setShowNotification] = useState(false);
+  const [isFrozen, setIsFrozen] = useState(false);
+  const [isAppReady, setIsAppReady] = useState(false); // <-- NEW STATE
+  const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleLogout = async () => {
     await logoutUser();
     navigate('/login');
   };
+
+  // LIVE LISTENER FOR ADMIN "FREEZE" COMMAND
+  useEffect(() => {
+    if (!user) return;
+    const unsubUser = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
+      if (docSnap.exists()) {
+        setIsFrozen(docSnap.data().isFrozen || false);
+      }
+    });
+    return () => unsubUser();
+  }, [user]);
+
+  // AUTO-REDIRECT TO LEADERBOARD WHEN MARKET CLOSES (With Fix for Reloading)
+  // NEW: Force the app to wait 1 second on hard reload to let Firebase fetch real data
+  useEffect(() => {
+    const timer = setTimeout(() => setIsAppReady(true), 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // UPDATED: AUTO-REDIRECT TO LEADERBOARD WHEN MARKET CLOSES
+  useEffect(() => {
+    // Only run redirect logic IF the 1-second grace period has passed
+    if (!isAppReady || !profile || !marketStatus || marketStatus === 'LOADING') return;
+
+    if (marketStatus === 'CLOSED' && profile.role !== 'admin') {
+      if (location.pathname !== '/leaderboard') {
+        navigate('/leaderboard');
+      }
+    }
+  }, [marketStatus, profile, location.pathname, navigate, isAppReady]);
+
+  // LIVE LISTENER FOR NEWS NOTIFICATIONS
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(collection(db, "newsEvents"), orderBy("createdAt", "desc"), limit(5));
+    
+    const unsub = onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        const firedEvents = snap.docs
+          .map(doc => doc.data())
+          .filter(news => news.startTime && news.startTime > 0)
+          .sort((a, b) => b.startTime - a.startTime);
+          
+        if (firedEvents.length > 0) {
+          const newestNews = firedEvents[0];
+          const timeSinceFired = Date.now() - newestNews.startTime;
+          const isRecent = timeSinceFired < 30000;
+
+          if (isRecent) {
+            setActiveNews(newestNews);
+            setShowNotification(true);
+            
+            if (notificationTimer.current) clearTimeout(notificationTimer.current);
+            const timeLeft = Math.max(0, 30000 - timeSinceFired);
+            notificationTimer.current = setTimeout(() => {
+              setShowNotification(false);
+            }, timeLeft);
+          } else {
+            setShowNotification(false);
+          }
+        }
+      }
+    });
+
+    return () => {
+      unsub();
+      if (notificationTimer.current) clearTimeout(notificationTimer.current);
+    };
+  }, [user]);
 
   const navLinks = [
     { path: '/', label: 'Dashboard' },
@@ -23,6 +104,14 @@ export default function MainLayout() {
     { path: '/ipo', label: 'IPOs' },
     { path: '/leaderboard', label: 'Leaderboard' },
   ];
+
+  // Hide all tabs except Leaderboard if the market is closed
+  const visibleNavLinks = (marketStatus === 'CLOSED' && profile?.role !== 'admin') 
+    ? navLinks.filter(link => link.path === '/leaderboard')
+    : navLinks;
+
+  // ANTI-CHEAT: Trigger block if market is paused OR admin froze the user
+  const isBlocked = profile?.role !== 'admin' && (marketStatus === 'PAUSED' || isFrozen);
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--bg-root)] transition-colors duration-200">
@@ -36,7 +125,7 @@ export default function MainLayout() {
             </Link>
             
             <nav className="hidden xl:flex items-center gap-6 h-full">
-              {navLinks.map(link => {
+              {visibleNavLinks.map(link => {
                 const isActive = location.pathname === link.path || (link.path !== '/' && location.pathname.startsWith(link.path));
                 return (
                   <Link
@@ -59,15 +148,6 @@ export default function MainLayout() {
           </div>
 
           <div className="flex items-center gap-4 sm:gap-6">
-            <div className="hidden md:flex relative">
-              <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
-              <input 
-                type="text" 
-                placeholder="Search stocks, news..." 
-                className="pl-9 pr-4 py-1.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded-full text-xs text-[var(--text-main)] focus:outline-none focus:border-[var(--up-color)] w-48 lg:w-64 transition-colors" 
-              />
-            </div>
-            
             <div className="flex items-center gap-2 sm:gap-3">
               <button 
                 onClick={toggleTheme} 
@@ -106,9 +186,46 @@ export default function MainLayout() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-[1600px] w-full mx-auto p-4 md:p-6 flex flex-col gap-6">
+      <main className="flex-1 max-w-[1600px] w-full mx-auto p-4 md:p-6 flex flex-col gap-6 relative">
         <Outlet />
       </main>
+
+      {/* 30-Second Animated News Popup */}
+      {showNotification && activeNews && !isBlocked && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#3b82f6] text-white p-4 rounded-lg shadow-2xl flex items-start gap-4 max-w-sm border border-blue-400 animate-bounce">
+          <div className="bg-white/20 p-2 rounded-full animate-pulse flex-shrink-0">
+            <Newspaper className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="font-bold text-xs uppercase tracking-wider text-blue-100">Breaking News</h4>
+              <button onClick={() => setShowNotification(false)} className="text-blue-200 hover:text-white transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm font-medium leading-snug">{activeNews.headline}</p>
+          </div>
+        </div>
+      )}
+
+      {/* ANTI-CHEAT FULL SCREEN BLOCKER */}
+      {isBlocked && (
+        <div className="fixed inset-0 z-[9999] bg-[var(--bg-root)] flex flex-col items-center justify-center p-4">
+          <div className="animate-pulse flex flex-col items-center gap-6">
+            <div className="w-24 h-24 rounded-full bg-[var(--bg-card)] border-4 border-[var(--border-subtle)] flex items-center justify-center shadow-2xl">
+              <Activity className="w-12 h-12 text-[var(--text-muted)]" />
+            </div>
+            <h1 className="text-2xl font-bold text-[var(--text-main)] tracking-widest uppercase">
+              {isFrozen ? "Account Suspended" : "Market Paused"}
+            </h1>
+            <p className="text-[var(--text-muted)] font-mono text-sm max-w-md text-center leading-relaxed">
+              {isFrozen 
+                ? "Your terminal access has been temporarily restricted by the administrator. Please contact the trading desk." 
+                : "The exchange is currently paused. Terminal data is hidden to prevent advanced charting. Await market open."}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

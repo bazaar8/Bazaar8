@@ -17,11 +17,14 @@ export default function StockDetail() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ status: string; reason?: string } | null>(null);
 
-  const stockMeta = STOCKS_CATALOG.find((s) => s.ticker === ticker) || {
+  const dbData = prices[ticker || ""];
+  const catalogData = STOCKS_CATALOG.find((s) => s.ticker === ticker);
+  
+  const stockMeta = {
     ticker: ticker || "RELIANCE",
-    name: "Equity Instrument",
-    sector: "Diversified",
-    basePrice: 1000.0
+    name: dbData?.name || catalogData?.name || "Equity Instrument",
+    sector: dbData?.sector || catalogData?.sector || "Diversified",
+    basePrice: dbData?.basePrice || catalogData?.basePrice || 1000.0
   };
 
   const livePrice = prices[stockMeta.ticker]?.price ?? stockMeta.basePrice;

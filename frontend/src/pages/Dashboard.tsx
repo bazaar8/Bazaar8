@@ -4,7 +4,7 @@ import { useLivePrices } from "../hooks/useLivePrices";
 import { useUserTradingData } from "../hooks/useUserTradingData";
 import { useWatchlists } from "../hooks/useWatchlists";
 import { STOCKS_CATALOG } from "../data/stocksData";
-import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { ArrowRight, TrendingUp, TrendingDown } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -28,14 +28,13 @@ const CustomTooltip = ({ active, payload, label, safeStarting }: any) => {
 
 export default function Dashboard() {
   const { prices, marketStatus } = useLivePrices();
-  const { cashBalance, startingBalance, longHoldings, shortHoldings, watchlist } = useUserTradingData();
+  const { cashBalance, startingBalance, longHoldings, shortHoldings } = useUserTradingData();
   const { watchlists } = useWatchlists();
   
   const [newsEvents, setNewsEvents] = useState<any[]>([]);
   const [showGainers, setShowGainers] = useState(true);
   const [activeListId, setActiveListId] = useState<string | null>(null);
-  
-  // Local state to build the live area chart history
+
   const [liveChartData, setLiveChartData] = useState<{time: string, value: number}[]>([]);
 
   useEffect(() => {
@@ -46,8 +45,10 @@ export default function Dashboard() {
   const activeList = watchlists.find(w => w.id === activeListId);
 
   useEffect(() => {
-    const q = query(collection(db, "newsEvents"), orderBy("createdAt", "desc"), limit(5));
-    const unsub = onSnapshot(q, (snap) => setNewsEvents(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const q = query(collection(db, "newsEvents"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      const allNews = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    });
     return () => unsub();
   }, []);
 
@@ -79,27 +80,23 @@ export default function Dashboard() {
   const totalPL = totalPortfolioValue - safeStarting;
   const returnPct = (totalPL / safeStarting) * 100;
 
-  // Append new portfolio value to chart data every 10 seconds
   useEffect(() => {
     if (totalPortfolioValue === 0) return;
     
     setLiveChartData(prev => {
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-      
-      // Prevent duplicate immediate updates in the same minute visually
+
       if (prev.length > 0 && prev[prev.length - 1].time === timeStr && prev[prev.length - 1].value === totalPortfolioValue) {
         return prev;
       }
       
       const newData = [...prev, { time: timeStr, value: totalPortfolioValue }];
-      // Keep last 40 data points for a smooth rolling window
       if (newData.length > 40) newData.shift();
       return newData;
     });
   }, [totalPortfolioValue]);
 
-  // Initial populate to give the chart a starting line if empty
   useEffect(() => {
     if (liveChartData.length === 0 && totalPortfolioValue > 0) {
       const now = new Date();
@@ -123,8 +120,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
-      
-      {/* LEFT COLUMN: Custom Watchlists Sidebar */}
+
       <div className="w-full lg:w-[240px] flex flex-col gap-4">
         <div className="terminal-card p-4 flex flex-col h-full">
           <div className="flex items-center justify-between mb-3 border-b border-[var(--border-subtle)] pb-2">
@@ -167,10 +163,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* CENTER COLUMN: Main Content */}
       <div className="flex-1 flex flex-col gap-4 lg:gap-6 min-w-0">
-        
-        {/* Top Summary Cards */}
+
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
           <div className="terminal-card p-4">
             <div className="text-[11px] text-[var(--text-muted)] mb-1 uppercase tracking-wider font-bold">Total Portfolio</div>
@@ -204,7 +198,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* NEW AREA CHART: Matches your screenshot precisely */}
         <div className="terminal-card p-4 flex flex-col">
           <div className="flex items-center justify-between mb-4 border-b border-[var(--border-subtle)] pb-4">
             <h3 className="text-sm font-bold text-[var(--text-main)] flex items-center gap-2 tracking-widest uppercase">
@@ -234,7 +227,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Bottom Split: News & Overview */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-6">
           {/* Live Market Feed */}
           <div className="terminal-card p-4">
@@ -254,11 +246,6 @@ export default function Dashboard() {
                     <div className="flex-1">
                       <p className="text-xs text-[var(--text-main)] font-medium leading-tight">{n.headline}</p>
                     </div>
-                    <div>
-                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider border bg-[#3b82f615] text-[#3b82f6] border-[#3b82f630]">
-                        WIRE
-                      </span>
-                    </div>
                   </div>
                 ))
               )}
@@ -268,7 +255,6 @@ export default function Dashboard() {
             </Link>
           </div>
 
-          {/* Market Overview */}
           <div className="terminal-card p-4">
             <div className="flex items-center justify-between mb-4 border-b border-[var(--border-subtle)] pb-3">
               <h3 className="text-sm font-bold text-[var(--text-main)]">Market Overview</h3>
@@ -302,7 +288,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* RIGHT COLUMN: Top Market Leaders */}
       <div className="w-full lg:w-[280px] flex flex-col gap-4">
         <div className="terminal-card p-4 flex flex-col h-full">
           <h3 className="text-sm font-bold text-[var(--text-main)] mb-4">Market Movers</h3>

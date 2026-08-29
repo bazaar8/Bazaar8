@@ -25,8 +25,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/tv" element={<TVLeaderboard />} />
-          
-          {/* Students are locked inside ProtectedRoute and pushed to MainLayout */}
+
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<MainLayout />}>
               <Route index element={<Dashboard />} />
@@ -40,8 +39,7 @@ export default function App() {
               <Route path="watchlists" element={<Watchlists />} />
             </Route>
           </Route>
-          
-          {/* Administrators are locked inside AdminRoute and pushed to AdminDashboard */}
+
           <Route element={<AdminRoute />}>
             <Route path="/admin" element={<AdminDashboard />} />
           </Route>

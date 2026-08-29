@@ -3,7 +3,6 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getDatabase } from "firebase/database";
 import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
-import { connectFirestoreEmulator } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -22,7 +21,6 @@ export const db = getFirestore(app);
 export const rtdb = getDatabase(app);
 export const functions = getFunctions(app);
 
-// HYBRID SETUP: Only Functions run locally, everything else uses Live Cloud
 if (import.meta.env.DEV) {
   connectFunctionsEmulator(functions, "localhost", 5001);
 }

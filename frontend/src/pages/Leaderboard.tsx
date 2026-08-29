@@ -2,7 +2,6 @@ import { useLeaderboard } from "../hooks/useLeaderboard";
 import { Clock, TrendingUp, TrendingDown } from "lucide-react";
 
 export default function Leaderboard() {
-  // Now we grab the countdown instead of lastUpdated
   const { rankings, countdown, loading } = useLeaderboard();
 
   if (loading) {
@@ -20,8 +19,7 @@ export default function Leaderboard() {
           <h1 className="text-lg font-bold text-[var(--text-main)] tracking-tight">Institutional Leaderboard</h1>
           <p className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5 uppercase tracking-wider">Global Trader Rankings</p>
         </div>
-        
-        {/* REPLACED SYNC TIME WITH COUNTDOWN */}
+
         <div className="flex items-center gap-2 text-[10px] font-mono text-[var(--text-muted)] bg-[var(--bg-card)] px-3 py-1.5 border border-[var(--border-subtle)] rounded shadow-sm">
           <Clock className="w-3.5 h-3.5" />
           <span className="font-bold">UPDATING IN {countdown}s</span>

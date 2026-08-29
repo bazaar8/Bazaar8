@@ -24,15 +24,13 @@ export default function TVLeaderboard() {
   };
 
   useEffect(() => {
-    // Initial fetch
     fetchLeaderboard();
 
-    // Strict 30-second countdown loop
     const timer = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
           fetchLeaderboard();
-          return 30; // Reset countdown
+          return 30; 
         }
         return prev - 1;
       });
@@ -43,8 +41,7 @@ export default function TVLeaderboard() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-root)] text-[var(--text-main)] flex flex-col p-6 font-sans transition-colors duration-200">
-      
-      {/* HEADER */}
+
       <header className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-6 mb-6">
         <div className="flex items-center gap-4">
           <div className="p-3 bg-[#08998115] rounded-xl border border-[#08998130] animate-pulse">
@@ -56,15 +53,13 @@ export default function TVLeaderboard() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          {/* THEME TOGGLE BUTTON */}
           <button 
             onClick={toggleTheme} 
             className="p-3 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
           >
             {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
-          
-          {/* REMOVED EXACT TIME, JUST SHOWS COUNTDOWN */}
+
           <div className="flex items-center gap-4 bg-[var(--bg-card)] border border-[var(--border-subtle)] px-6 py-3 rounded-xl shadow-sm">
             <Clock className="w-5 h-5 text-[var(--text-muted)]" />
             <div className="flex flex-col items-end font-mono">
@@ -74,7 +69,6 @@ export default function TVLeaderboard() {
         </div>
       </header>
 
-      {/* LEADERBOARD TABLE */}
       <div className="flex-1 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)] overflow-hidden shadow-sm">
         {loading ? (
           <div className="h-full flex items-center justify-center">

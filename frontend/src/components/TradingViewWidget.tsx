@@ -16,11 +16,11 @@ function TradingViewWidget({ symbol }: { symbol: string }) {
 
     script.innerHTML = JSON.stringify({
       autosize: true,
-      symbol: `BSE:${symbol}`, // <-- Forces Indian Exchange (fixes Apple bug)
+      symbol: `BSE:${symbol}`,
       interval: "D",
       timezone: "Asia/Kolkata",
       theme: isDark ? "dark" : "light",
-      style: "1", // <-- 1 = Candle Chart
+      style: "1",
       locale: "en",
       enable_publishing: false,
       backgroundColor: isDark ? "#0b0e14" : "#ffffff",
@@ -28,7 +28,7 @@ function TradingViewWidget({ symbol }: { symbol: string }) {
       hide_top_toolbar: false,
       hide_legend: false,
       save_image: false,
-      hide_side_toolbar: false, // <-- Enables Drawing Tools
+      hide_side_toolbar: false, 
       allow_symbol_change: false,
       details: true,
       container_id: `tv_chart_${symbol}`

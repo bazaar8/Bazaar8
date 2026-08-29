@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getDatabase, ref, onValue } from "firebase/database";
-import { getFirestore, collection, onSnapshot, query, orderBy, limit, addDoc, doc, updateDoc, increment } from "firebase/firestore";
+import { getFirestore, collection, onSnapshot, query, orderBy, limit, addDoc, doc, updateDoc} from "firebase/firestore";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { app, auth } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
@@ -12,7 +12,6 @@ import {
   Plus, Send, CheckCircle, Upload, X, Clock, TrendingUp, Mail, BarChart2, Sun, Moon
 } from "lucide-react";
 import { importNewsEvents, releaseEventNow, cancelEvent } from "../services/newsAdminService";
-import { processIPOAllotment, listIPO } from "../services/ipoService";
 
 type Tab = 'dashboard' | 'market' | 'participants' | 'stocks' | 'logs' | 'news' | 'ipo';
 
@@ -20,7 +19,6 @@ export default function AdminDashboard() {
   const { logoutUser, profile } = useAuth();
   const { isDark, toggleTheme } = useTheme(); 
   
-  // ALL REACT HOOKS MUST BE AT THE TOP LEVEL
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [forceTicker, setForceTicker] = useState("");
   const [forcePrice, setForcePrice] = useState("");
@@ -34,11 +32,12 @@ export default function AdminDashboard() {
   const [ipoName, setIpoName] = useState("");
   const [ipoTicker, setIpoTicker] = useState("");
   const [ipoPrice, setIpoPrice] = useState("");
-  const [ipoShares, setIpoShares] = useState("");
+  const [ipoLotSize, setIpoLotSize] = useState(""); 
+  const [ipoTotalLots, setIpoTotalLots] = useState(""); 
+  const [ipoPremium, setIpoPremium] = useState(""); 
   const [ipoOpenTime, setIpoOpenTime] = useState("");
   const [ipoCloseTime, setIpoCloseTime] = useState("");
   const [ipoListTime, setIpoListTime] = useState("");
-  const [ipoPremium, setIpoPremium] = useState(""); 
   
   const [processingAction, setProcessingAction] = useState<string | null>(null);
 
@@ -49,7 +48,6 @@ export default function AdminDashboard() {
   const [marketState, setMarketState] = useState("LOADING");
   const [prices, setPrices] = useState<Record<string, any>>({});
   
-  // NEW LOGS STATE PROPERLY PLACED
   const [adminLogs, setAdminLogs] = useState<any[]>([]);
   
   const functions = getFunctions(app);
@@ -81,7 +79,6 @@ export default function AdminDashboard() {
       setAdminEvents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    // LISTENER FOR ADMIN LOGS
     const unsubAdminLogs = onSnapshot(query(collection(db, "adminLogs"), orderBy("timestamp", "desc"), limit(100)), (snap) => {
       setAdminLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
@@ -97,7 +94,6 @@ export default function AdminDashboard() {
     };
   }, [profile]);
 
-  // HELPER TO RECORD AUDIT LOGS
   const logAdminAction = async (action: string, details: any) => {
     try {
       await addDoc(collection(db, "adminLogs"), {
@@ -156,14 +152,9 @@ export default function AdminDashboard() {
       setProcessingAction(`cash-${uid}`);
       logAdminAction("ADJUST_USER_BALANCE", { targetUserId: uid, newBalance: amount, reason: "Admin manual reset" });
       try {
-        await updateDoc(doc(db, "users", uid), {
-          cashBalance: amount
-        });
-      } catch (err: any) {
-        alert("Error adjusting cash: " + err.message);
-      } finally {
-        setProcessingAction(null);
-      }
+        await updateDoc(doc(db, "users", uid), { cashBalance: amount });
+      } catch (err: any) { alert("Error adjusting cash: " + err.message); } 
+      finally { setProcessingAction(null); }
     }
   };
 
@@ -295,19 +286,27 @@ export default function AdminDashboard() {
   };
 
   const handleCreateIPO = async () => {
-    if (!ipoName || !ipoTicker || !ipoPrice || !ipoShares) return;
+    if (!ipoName || !ipoTicker || !ipoPrice || !ipoLotSize || !ipoTotalLots) return;
     setProcessingAction('create-ipo');
-    logAdminAction("CREATE_IPO", { symbol: ipoTicker.toUpperCase(), companyName: ipoName });
+    logAdminAction("CREATE_IPO", { symbol: ipoTicker.toUpperCase(), companyName: ipoName, totalLots: ipoTotalLots });
     try {
       const startOpen = ipoOpenTime ? new Date(ipoOpenTime).getTime() : Date.now();
       const currentStatus = startOpen > Date.now() ? "upcoming" : "open";
       await addDoc(collection(db, "ipos"), {
-        name: ipoName, ticker: ipoTicker.toUpperCase(), price: parseFloat(ipoPrice), totalShares: parseInt(ipoShares),
-        listingPremiumPct: parseFloat(ipoPremium) || 0, sector: "Upcoming", allotmentType: "pro-rata", status: currentStatus,
-        openTime: startOpen, closeTime: ipoCloseTime ? new Date(ipoCloseTime).getTime() : Date.now() + 3600000,
+        name: ipoName, 
+        ticker: ipoTicker.toUpperCase(), 
+        price: parseFloat(ipoPrice), 
+        lotSize: parseInt(ipoLotSize),           
+        totalLots: parseInt(ipoTotalLots),       
+        listingPremiumPct: parseFloat(ipoPremium) || 0, 
+        sector: "Upcoming", 
+        allotmentType: "lottery",                
+        status: currentStatus,
+        openTime: startOpen, 
+        closeTime: ipoCloseTime ? new Date(ipoCloseTime).getTime() : Date.now() + 3600000,
         listTime: ipoListTime ? new Date(ipoListTime).getTime() : Date.now() + 7200000
       });
-      setIpoName(""); setIpoTicker(""); setIpoPrice(""); setIpoShares(""); setIpoOpenTime(""); setIpoCloseTime(""); setIpoListTime(""); setIpoPremium("");
+      setIpoName(""); setIpoTicker(""); setIpoPrice(""); setIpoLotSize(""); setIpoTotalLots(""); setIpoPremium(""); setIpoOpenTime(""); setIpoCloseTime(""); setIpoListTime("");
       alert("IPO Scheduled & Initialized!");
     } catch (err: any) { alert("Error creating IPO: " + err.message); } finally { setProcessingAction(null); }
   };
@@ -317,8 +316,8 @@ export default function AdminDashboard() {
     logAdminAction(action === 'allot' ? "RUN_IPO_ALLOTMENT" : action === 'list' ? "LIST_IPO" : "CLOSE_IPO", { ipoSymbol: ipoId });
     try {
       if (action === 'close') await updateDoc(doc(db, "ipos", ipoId), { status: "closed" });
-      else if (action === 'allot') await processIPOAllotment(ipoId);
-      else await listIPO(ipoId);
+      else if (action === 'allot') await updateDoc(doc(db, "ipos", ipoId), { triggerAllotment: true });
+      else await updateDoc(doc(db, "ipos", ipoId), { triggerListing: true });
     } catch (err: any) { alert(`Error during ${action}: ` + err.message); } finally { setProcessingAction(null); }
   };
 
@@ -329,7 +328,7 @@ export default function AdminDashboard() {
     { id: 'stocks', label: 'STOCKS', icon: BarChart2 },
     { id: 'logs', label: 'ACTIVITY LOGS', icon: ShieldAlert },
     { id: 'news', label: 'NEWS WIRE', icon: Newspaper },
-    { id: 'ipo', label: 'PRIMARY MKT', icon: Sparkles },
+    { id: 'ipo', label: 'IPO', icon: Sparkles },
   ];
 
   return (
@@ -338,11 +337,8 @@ export default function AdminDashboard() {
         <div className="p-4 border-b border-[var(--border-subtle)]">
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-5 h-5 text-amber-500" />
-            <span className="text-amber-500 font-bold tracking-tight text-lg">Admin_Sys</span>
+            <span className="text-amber-500 font-bold tracking-tight text-lg">Admin Dashboard</span>
           </div>
-          <span className="text-[9px] text-[var(--text-muted)] font-mono tracking-widest block mt-1 uppercase">
-            MarketSim v2.1
-          </span>
         </div>
         
         <nav className="flex-1 overflow-y-auto flex flex-col py-3">
@@ -899,13 +895,20 @@ export default function AdminDashboard() {
                     
                     <div className="grid grid-cols-3 gap-2">
                       <div className="col-span-1">
-                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Issue Price</label>
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Price per Share</label>
                         <input type="number" value={ipoPrice} onChange={(e) => setIpoPrice(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="₹" />
                       </div>
                       <div className="col-span-1">
-                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Shares</label>
-                        <input type="number" value={ipoShares} onChange={(e) => setIpoShares(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Qty" />
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Lot Size (Shares)</label>
+                        <input type="number" value={ipoLotSize} onChange={(e) => setIpoLotSize(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Qty" />
                       </div>
+                      <div className="col-span-1">
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Total Lots</label>
+                        <input type="number" value={ipoTotalLots} onChange={(e) => setIpoTotalLots(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Max Winners" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2">
                       <div className="col-span-1">
                         <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase flex items-center gap-1"><TrendingUp className="w-3 h-3 text-[var(--up-color)]"/> Hike %</label>
                         <input type="number" value={ipoPremium} onChange={(e) => setIpoPremium(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="+GMP%" />
@@ -943,51 +946,56 @@ export default function AdminDashboard() {
                     <thead className="bg-[var(--bg-root)] border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-[10px] uppercase">
                       <tr>
                         <th className="p-3">Ticker</th>
-                        <th className="p-3 text-right">Issue Price</th>
+                        <th className="p-3 text-right">Price/Lot</th>
                         <th className="p-3 text-right">Hike (GMP)</th>
                         <th className="p-3 text-center">Status</th>
                         <th className="p-3 text-right">Manual Override</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border-subtle)]">
-                      {ipos.map(ipo => (
-                        <tr key={ipo.id} className="hover:bg-[var(--bg-root)] transition-colors">
-                          <td className="p-3 text-[var(--text-main)] font-bold">{ipo.ticker}</td>
-                          <td className="p-3 text-right text-[var(--text-main)]">₹{ipo.price}</td>
-                          <td className="p-3 text-right text-[var(--up-color)]">+{ipo.listingPremiumPct || 0}%</td>
-                          <td className="p-3 text-center">
-                            <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase ${
-                              ipo.status === 'upcoming' ? 'bg-[#f59e0b15] text-[#f59e0b]' :
-                              ipo.status === 'open' ? 'bg-[#08998115] text-[var(--up-color)] animate-pulse' :
-                              ipo.status === 'allotting' ? 'bg-[#8b5cf615] text-[#8b5cf6] animate-pulse' :
-                              'bg-[#3b82f615] text-[#3b82f6]'
-                            }`}>{ipo.status}</span>
-                          </td>
-                          <td className="p-3 flex justify-end gap-2">
-                            <button 
-                              onClick={() => handleIPOAction(ipo.id, 'close')}
-                              disabled={ipo.status !== 'open' || processingAction === `${ipo.id}-close`}
-                              className="px-2 py-1 flex items-center gap-1 bg-[#f59e0b15] hover:opacity-80 border border-[#f59e0b50] disabled:opacity-50 text-[#f59e0b] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
-                            >
-                              {processingAction === `${ipo.id}-close` ? <div className="w-3 h-3 border-2 border-[#f59e0b] border-t-transparent rounded-full animate-spin" /> : <><Pause className="w-3 h-3" /> Close</>}
-                            </button>
-                            <button 
-                              onClick={() => handleIPOAction(ipo.id, 'allot')}
-                              disabled={ipo.status !== 'closed' || processingAction === `${ipo.id}-allot`}
-                              className="px-2 py-1 flex items-center gap-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-colors"
-                            >
-                              {processingAction === `${ipo.id}-allot` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Allot</>}
-                            </button>
-                            <button 
-                              onClick={() => handleIPOAction(ipo.id, 'list')}
-                              disabled={ipo.status !== 'allotted' || processingAction === `${ipo.id}-list`}
-                              className="px-2 py-1 flex items-center gap-1 bg-[#08998115] hover:opacity-80 border border-[#08998150] disabled:opacity-50 text-[var(--up-color)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
-                            >
-                               {processingAction === `${ipo.id}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Activity className="w-3 h-3" /> List</>}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {ipos.map(ipo => {
+                        const costPerLot = (Number(ipo.price) || 0) * (Number(ipo.lotSize) || 1);
+                        return (
+                          <tr key={ipo.id} className="hover:bg-[var(--bg-root)] transition-colors">
+                            <td className="p-3 text-[var(--text-main)] font-bold">
+                              {ipo.ticker} <span className="block text-[9px] font-normal text-[var(--text-muted)]">{ipo.lotSize} shares/lot</span>
+                            </td>
+                            <td className="p-3 text-right text-[var(--text-main)]">₹{costPerLot.toFixed(2)}</td>
+                            <td className="p-3 text-right text-[var(--up-color)]">+{ipo.listingPremiumPct || 0}%</td>
+                            <td className="p-3 text-center">
+                              <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase ${
+                                ipo.status === 'upcoming' ? 'bg-[#f59e0b15] text-[#f59e0b]' :
+                                ipo.status === 'open' ? 'bg-[#08998115] text-[var(--up-color)] animate-pulse' :
+                                ipo.status === 'allotting' ? 'bg-[#8b5cf615] text-[#8b5cf6] animate-pulse' :
+                                'bg-[#3b82f615] text-[#3b82f6]'
+                              }`}>{ipo.status}</span>
+                            </td>
+                            <td className="p-3 flex justify-end gap-2">
+                              <button 
+                                onClick={() => handleIPOAction(ipo.id, 'close')}
+                                disabled={ipo.status !== 'open' || processingAction === `${ipo.id}-close`}
+                                className="px-2 py-1 flex items-center gap-1 bg-[#f59e0b15] hover:opacity-80 border border-[#f59e0b50] disabled:opacity-50 text-[#f59e0b] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
+                              >
+                                {processingAction === `${ipo.id}-close` ? <div className="w-3 h-3 border-2 border-[#f59e0b] border-t-transparent rounded-full animate-spin" /> : <><Pause className="w-3 h-3" /> Close</>}
+                              </button>
+                              <button 
+                                onClick={() => handleIPOAction(ipo.id, 'allot')}
+                                disabled={ipo.status !== 'closed' || processingAction === `${ipo.id}-allot`}
+                                className="px-2 py-1 flex items-center gap-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-colors"
+                              >
+                                {processingAction === `${ipo.id}-allot` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Allot</>}
+                              </button>
+                              <button 
+                                onClick={() => handleIPOAction(ipo.id, 'list')}
+                                disabled={ipo.status !== 'allotted' || processingAction === `${ipo.id}-list`}
+                                className="px-2 py-1 flex items-center gap-1 bg-[#08998115] hover:opacity-80 border border-[#08998150] disabled:opacity-50 text-[var(--up-color)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
+                              >
+                                 {processingAction === `${ipo.id}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Activity className="w-3 h-3" /> List</>}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

@@ -1,13 +1,58 @@
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
+import { collection, query, onSnapshot, doc } from "firebase/firestore";
+import { db } from "../config/firebase";
 import { useUserTradingData } from "../hooks/useUserTradingData";
 import { useLivePrices } from "../hooks/useLivePrices";
-import { useAuth } from "../context/AuthContext"; // <-- Added to get the user's email
+import { useAuth } from "../context/AuthContext";
 import { PieChart, TrendingUp, TrendingDown, ArrowRight, ListOrdered } from "lucide-react";
 
 export default function Portfolio() {
-  const { profile } = useAuth(); // <-- Extract profile for the PDF
+  const { profile } = useAuth();
   const { cashBalance, startingBalance, longHoldings, shortHoldings, recentOrders, loading } = useUserTradingData();
   const { prices, marketStatus } = useLivePrices();
+  
+  const [blockedIpoFunds, setBlockedIpoFunds] = useState(0);
+  const ipoUnsubs = useRef<(() => void)[]>([]);
+
+  useEffect(() => {
+    if (!profile?.uid) return;
+    const q = query(collection(db, "ipos"));
+    
+    const unsub = onSnapshot(q, (snap) => {
+       ipoUnsubs.current.forEach(fn => fn());
+       ipoUnsubs.current = [];
+
+       const activeIpos = snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((i: any) => ['upcoming', 'open', 'closed'].includes(i.status));
+       const currentBlocked: Record<string, number> = {};
+
+       activeIpos.forEach((ipo: any) => {
+          const subRef = doc(db, "ipos", ipo.id, "subscriptions", profile.uid);
+          const subUnsub = onSnapshot(subRef, (subSnap) => {
+             if (subSnap.exists()) {
+                const subData = subSnap.data() as any;
+                if (!['won', 'lost', 'success', 'refunded'].includes(subData.status)) {
+                   const price = Number(ipo.price) || 0;
+                   const lotSize = Number(ipo.lotSize) || 1;
+                   const reqLots = Number(subData.requestedLots) || Math.max(1, Math.floor((Number(subData.requestedShares) || 1) / lotSize));
+                   currentBlocked[ipo.id] = (reqLots * lotSize * price);
+                } else {
+                   currentBlocked[ipo.id] = 0;
+                }
+             } else {
+                currentBlocked[ipo.id] = 0;
+             }
+             setBlockedIpoFunds(Object.values(currentBlocked).reduce((a, b) => a + b, 0));
+          });
+          ipoUnsubs.current.push(subUnsub);
+       });
+    });
+
+    return () => {
+      unsub();
+      ipoUnsubs.current.forEach(fn => fn());
+    };
+  }, [profile]);
 
   if (loading) {
     return (
@@ -17,7 +62,6 @@ export default function Portfolio() {
     );
   }
 
-  // Bulletproof math to catch and heal 'NaN' database corruption
   const safeCash = isNaN(Number(cashBalance)) ? 0 : Number(cashBalance);
   const safeStarting = isNaN(Number(startingBalance)) || Number(startingBalance) === 0 ? 1000000 : Number(startingBalance);
 
@@ -33,16 +77,15 @@ export default function Portfolio() {
     return sum + (q * p);
   }, 0);
 
-  const totalPortfolioValue = safeCash + longMarketValue - shortLiability;
+  const totalPortfolioValue = safeCash + longMarketValue - shortLiability + blockedIpoFunds;
   const totalPL = totalPortfolioValue - safeStarting;
   const returnPct = (totalPL / safeStarting) * 100;
 
-  const chartTotal = Math.max(1, safeCash + longMarketValue + shortLiability);
+  const chartTotal = Math.max(1, safeCash + longMarketValue + shortLiability + blockedIpoFunds);
   const eqPct = (longMarketValue / chartTotal) * 100;
-  const cashPct = (safeCash / chartTotal) * 100;
+  const cashPct = ((safeCash + blockedIpoFunds) / chartTotal) * 100;
   const shortPct = (shortLiability / chartTotal) * 100;
 
-  // SVG PIE CHART MATH
   const eqDash = `${eqPct} ${100 - eqPct}`;
   const cashDash = `${cashPct} ${100 - cashPct}`;
   const shortDash = `${shortPct} ${100 - shortPct}`;
@@ -51,7 +94,6 @@ export default function Portfolio() {
   const cashOffset = 100 - eqPct;
   const shortOffset = 100 - (eqPct + cashPct);
 
-  // FIXED PDF EXPORT FUNCTION
   const handleExportPDF = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
@@ -67,7 +109,7 @@ export default function Portfolio() {
             body { font-family: 'Courier New', Courier, monospace; padding: 40px; color: #111; }
             h1 { text-align: center; border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 30px; }
             .header-info { display: flex; justify-content: space-between; margin-bottom: 30px; font-size: 14px; }
-            table { w-full; width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 12px; }
             th { border-bottom: 2px solid #111; padding: 10px; text-align: left; background-color: #f4f4f4; }
             td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
             .right { text-align: right; }
@@ -126,7 +168,6 @@ export default function Portfolio() {
     }, 250);
   };
 
-
   return (
     <div className="flex flex-col gap-4 lg:gap-6">
       <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
@@ -155,7 +196,11 @@ export default function Portfolio() {
           <div className="text-xl lg:text-2xl font-bold font-mono text-[var(--text-main)]">
             ₹{safeCash.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">Unallocated Margin</div>
+          {blockedIpoFunds > 0 ? (
+            <div className="text-[10px] font-mono text-[#3b82f6] mt-1 font-bold">+ ₹{blockedIpoFunds.toLocaleString()} Blocked in IPO</div>
+          ) : (
+            <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">Unallocated Margin</div>
+          )}
         </div>
         <div className="terminal-card p-4">
           <div className="flex justify-between items-center text-[var(--text-muted)] text-[10px] uppercase font-bold mb-1">
@@ -207,7 +252,7 @@ export default function Portfolio() {
             <div className="flex items-center justify-between text-xs font-mono">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-[var(--up-color)]"></span>
-                <span className="text-[var(--text-main)]">Cash</span>
+                <span className="text-[var(--text-main)]">Cash (inc. Blocked)</span>
               </div>
               <span className="text-[var(--text-muted)]">{cashPct.toFixed(1)}%</span>
             </div>

@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWatchlists } from "../hooks/useWatchlists";
 import { useLivePrices } from "../hooks/useLivePrices";
-import { STOCKS_CATALOG } from "../data/stocksData";
 import Sparkline from "../components/Sparkline";
 import { Plus, Trash2, Edit2, X, PlusCircle, LayoutList } from "lucide-react";
 
@@ -52,8 +51,7 @@ export default function Watchlists() {
       </div>
 
       <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
-        
-        {/* Sidebar: Watchlist Tabs */}
+
         <div className="w-full lg:w-[260px] flex flex-col gap-4">
           <div className="terminal-card p-4">
             <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--border-subtle)]">
@@ -92,12 +90,10 @@ export default function Watchlists() {
           </div>
         </div>
 
-        {/* Main Area: Watchlist Content */}
         <div className="flex-1 flex flex-col gap-4 min-w-0">
           {activeList ? (
             <div className="terminal-card p-0 overflow-hidden flex flex-col">
-              
-              {/* Header */}
+
               <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between bg-[var(--bg-root)]">
                 <h2 className="text-sm font-bold text-[var(--text-main)]">{activeList.name}</h2>
                 <div className="flex items-center gap-2">
@@ -116,35 +112,37 @@ export default function Watchlists() {
                 </div>
               </div>
 
-              {/* Add Stock Drawer */}
               {showAddStock && (
                 <div className="p-4 bg-[var(--bg-card)] border-b border-[var(--border-subtle)] max-h-[300px] overflow-y-auto">
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                    {STOCKS_CATALOG.map((stock) => {
-                      const isAdded = activeList.tickers.includes(stock.ticker);
-                      return (
-                        <div
-                          key={stock.ticker}
-                          className="flex items-center justify-between p-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded"
-                        >
-                          <span className="text-xs font-bold text-[var(--text-main)] font-mono">{stock.ticker}</span>
-                          {isAdded ? (
-                            <button onClick={() => removeStock(activeList.id, stock.ticker)} className="text-[var(--down-color)] p-1 hover:bg-[var(--bg-card)] rounded">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          ) : (
-                            <button onClick={() => addStock(activeList.id, stock.ticker)} className="text-[var(--up-color)] p-1 hover:bg-[var(--bg-card)] rounded">
-                              <PlusCircle className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {Object.keys(prices).length === 0 ? (
+                      <div className="col-span-full text-xs text-[var(--text-muted)] p-2">No stocks available in the market.</div>
+                    ) : (
+                      Object.keys(prices).map((ticker) => {
+                        const isAdded = activeList.tickers.includes(ticker);
+                        return (
+                          <div
+                            key={ticker}
+                            className="flex items-center justify-between p-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded"
+                          >
+                            <span className="text-xs font-bold text-[var(--text-main)] font-mono">{ticker}</span>
+                            {isAdded ? (
+                              <button onClick={() => removeStock(activeList.id, ticker)} className="text-[var(--down-color)] p-1 hover:bg-[var(--bg-card)] rounded">
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button onClick={() => addStock(activeList.id, ticker)} className="text-[var(--up-color)] p-1 hover:bg-[var(--bg-card)] rounded">
+                                <PlusCircle className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               )}
 
-              {/* Stock Rows */}
               <div>
                 {activeList.tickers.length === 0 ? (
                   <div className="text-xs font-medium text-[var(--text-muted)] text-center py-12">
@@ -153,14 +151,16 @@ export default function Watchlists() {
                 ) : (
                   <div className="divide-y divide-[var(--border-subtle)]">
                     {activeList.tickers.map((ticker) => {
-                      const s = STOCKS_CATALOG.find((x) => x.ticker === ticker);
-                      if (!s) return null;
+                      const data = prices[ticker] as any;
+                      if (!data) return null; 
 
-                      const livePrice = prices[ticker]?.price ?? s.basePrice;
-                      const change = livePrice - s.basePrice;
-                      const changePct = (change / s.basePrice) * 100;
+                      const livePrice = data.price ?? 0;
+                      const basePrice = data.basePrice ?? livePrice;
+                      const name = data.name || ticker;
+                      const change = livePrice - basePrice;
+                      const changePct = basePrice > 0 ? (change / basePrice) * 100 : 0;
                       const isUp = change >= 0;
-                      const spark = [s.basePrice, s.basePrice * 0.997, s.basePrice * 1.004, livePrice * 0.999, livePrice];
+                      const spark = [basePrice, basePrice * 0.997, basePrice * 1.004, livePrice * 0.999, livePrice];
 
                       return (
                         <div key={ticker} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 hover:bg-[var(--bg-root)] transition-colors group">
@@ -170,7 +170,7 @@ export default function Watchlists() {
                               <Link to={`/stocks/${ticker}`} className="text-sm font-bold text-[var(--text-main)] hover:text-[var(--up-color)] transition-colors block">
                                 {ticker}
                               </Link>
-                              <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">{s.name}</span>
+                              <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">{name}</span>
                             </div>
                           </div>
 

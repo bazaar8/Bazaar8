@@ -17,7 +17,7 @@ export default function StockDetail() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ status: string; reason?: string } | null>(null);
 
-  const dbData = prices[ticker || ""];
+  const dbData = prices[ticker || ""]as any;
   const catalogData = STOCKS_CATALOG.find((s) => s.ticker === ticker);
   
   const stockMeta = {

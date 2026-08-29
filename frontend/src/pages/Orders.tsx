@@ -13,8 +13,7 @@ export default function Orders() {
 
   useEffect(() => {
     if (!user) return;
-    
-    // THE FIX: Added limit(100) to prevent browser memory leaks during high-frequency trading
+
     const q = query(
       collection(db, "orders"), 
       where("uid", "==", user.uid),
@@ -26,7 +25,6 @@ export default function Orders() {
       snap.forEach((d) => {
         ords.push(d.data() as Order);
       });
-      // Sort client-side to avoid needing a complex composite index in Firestore
       ords.sort((a, b) => b.timestamp - a.timestamp);
       setOrders(ords);
       setLoading(false);

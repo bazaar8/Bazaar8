@@ -16,7 +16,10 @@ export function useWatchlists() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
     const colRef = collection(db, "users", user.uid, "watchlists");
     const unsub = onSnapshot(colRef, (snap) => {
       const lists: Watchlist[] = [];
@@ -27,7 +30,7 @@ export function useWatchlists() {
       setLoading(false);
     }, (error) => {
       console.warn("Watchlists restricted:", error);
-      setLoading(false); // <-- This safely stops the crash loop
+      setLoading(false); 
     });
     return () => unsub();
   }, [user]);

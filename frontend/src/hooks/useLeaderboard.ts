@@ -29,15 +29,12 @@ export function useLeaderboard() {
   };
 
   useEffect(() => {
-    // Initial fetch
     fetchLeaderboard();
-
-    // Strict 30-second countdown loop
     const timer = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
           fetchLeaderboard();
-          return 30; // Reset countdown
+          return 30; 
         }
         return prev - 1;
       });

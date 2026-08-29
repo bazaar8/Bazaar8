@@ -3,7 +3,7 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../hooks/useTheme';
 import { useLivePrices } from '../hooks/useLivePrices';
-import { LogOut, Activity, Bell, Sun, Moon, User, X, Newspaper } from 'lucide-react';
+import { LogOut, Activity, Bell, Sun, Moon, User, X, Newspaper, Menu } from 'lucide-react';
 import { collection, query, limit, onSnapshot, orderBy, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -17,7 +17,8 @@ export default function MainLayout() {
   const [activeNews, setActiveNews] = useState<any | null>(null);
   const [showNotification, setShowNotification] = useState(false);
   const [isFrozen, setIsFrozen] = useState(false);
-  const [isAppReady, setIsAppReady] = useState(false); // <-- NEW STATE
+  const [isAppReady, setIsAppReady] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // <-- NEW: Mobile Menu State
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleLogout = async () => {
@@ -25,7 +26,6 @@ export default function MainLayout() {
     navigate('/login');
   };
 
-  // LIVE LISTENER FOR ADMIN "FREEZE" COMMAND
   useEffect(() => {
     if (!user) return;
     const unsubUser = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
@@ -36,16 +36,12 @@ export default function MainLayout() {
     return () => unsubUser();
   }, [user]);
 
-  // AUTO-REDIRECT TO LEADERBOARD WHEN MARKET CLOSES (With Fix for Reloading)
-  // NEW: Force the app to wait 1 second on hard reload to let Firebase fetch real data
   useEffect(() => {
     const timer = setTimeout(() => setIsAppReady(true), 1000);
     return () => clearTimeout(timer);
   }, []);
 
-  // UPDATED: AUTO-REDIRECT TO LEADERBOARD WHEN MARKET CLOSES
   useEffect(() => {
-    // Only run redirect logic IF the 1-second grace period has passed
     if (!isAppReady || !profile || !marketStatus || marketStatus === 'LOADING') return;
 
     if (marketStatus === 'CLOSED' && profile.role !== 'admin') {
@@ -55,7 +51,6 @@ export default function MainLayout() {
     }
   }, [marketStatus, profile, location.pathname, navigate, isAppReady]);
 
-  // LIVE LISTENER FOR NEWS NOTIFICATIONS
   useEffect(() => {
     if (!user) return;
 
@@ -105,12 +100,10 @@ export default function MainLayout() {
     { path: '/leaderboard', label: 'Leaderboard' },
   ];
 
-  // Hide all tabs except Leaderboard if the market is closed
   const visibleNavLinks = (marketStatus === 'CLOSED' && profile?.role !== 'admin') 
     ? navLinks.filter(link => link.path === '/leaderboard')
     : navLinks;
 
-  // ANTI-CHEAT: Trigger block if market is paused OR admin froze the user
   const isBlocked = profile?.role !== 'admin' && (marketStatus === 'PAUSED' || isFrozen);
 
   return (
@@ -123,8 +116,8 @@ export default function MainLayout() {
               <Activity className="w-6 h-6 text-[var(--up-color)]" />
               <span className="font-bold text-lg tracking-tight text-[var(--text-main)]">MarketSim</span>
             </Link>
-            
-            <nav className="hidden xl:flex items-center gap-6 h-full">
+
+            <nav className="hidden lg:flex items-center gap-6 h-full">
               {visibleNavLinks.map(link => {
                 const isActive = location.pathname === link.path || (link.path !== '/' && location.pathname.startsWith(link.path));
                 return (
@@ -157,14 +150,14 @@ export default function MainLayout() {
                 {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
               
-              <button className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)] relative">
+              <button className="hidden sm:block p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)] relative">
                 <Bell className="w-4 h-4" />
                 <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-[var(--down-color)] rounded-full border border-[var(--bg-card)]"></span>
               </button>
               
               {user && (
                 <div className="flex items-center gap-3 border-l border-[var(--border-subtle)] pl-3 sm:pl-4 ml-1">
-                  <div className="w-8 h-8 rounded-full bg-[var(--bg-root)] border border-[var(--border-subtle)] flex items-center justify-center text-[var(--text-muted)] overflow-hidden">
+                  <div className="hidden sm:flex w-8 h-8 rounded-full bg-[var(--bg-root)] border border-[var(--border-subtle)] items-center justify-center text-[var(--text-muted)] overflow-hidden">
                     <User className="w-4 h-4" />
                   </div>
                   <div className="text-left hidden sm:block leading-tight">
@@ -173,24 +166,62 @@ export default function MainLayout() {
                   </div>
                   <button 
                     onClick={handleLogout} 
-                    className="ml-1 p-1.5 text-[var(--text-muted)] hover:text-[var(--down-color)] transition-colors rounded-full hover:bg-[var(--bg-root)]"
+                    className="p-1.5 text-[var(--text-muted)] hover:text-[var(--down-color)] transition-colors rounded-full hover:bg-[var(--bg-root)]"
                     title="Sign Out"
                   >
                     <LogOut className="w-4 h-4" />
+                  </button>
+
+                  <button 
+                    onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} 
+                    className="lg:hidden p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)]"
+                    title="Menu"
+                  >
+                    {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
                   </button>
                 </div>
               )}
             </div>
           </div>
-
         </div>
+
+        {isMobileMenuOpen && (
+          <nav className="lg:hidden bg-[var(--bg-card)] border-t border-[var(--border-subtle)] p-4 flex flex-col gap-2 shadow-lg absolute w-full left-0 z-40">
+            <div className="sm:hidden flex items-center gap-3 pb-4 mb-2 border-b border-[var(--border-subtle)]">
+              <div className="w-8 h-8 rounded-full bg-[var(--bg-root)] border border-[var(--border-subtle)] flex items-center justify-center text-[var(--text-muted)] overflow-hidden">
+                <User className="w-4 h-4" />
+              </div>
+              <div className="text-left leading-tight">
+                <div className="text-xs font-bold text-[var(--text-main)]">{profile?.name || user?.email?.split('@')[0]}</div>
+                <div className="text-[10px] text-[var(--up-color)] font-medium">{profile?.role === 'admin' ? 'Administrator' : 'Pro Trader'}</div>
+              </div>
+            </div>
+
+            {visibleNavLinks.map(link => {
+              const isActive = location.pathname === link.path || (link.path !== '/' && location.pathname.startsWith(link.path));
+              return (
+                <Link
+                  key={link.path}
+                  to={link.path}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`flex items-center px-4 py-3 text-sm font-bold transition-colors rounded ${
+                    isActive 
+                      ? 'bg-[var(--bg-root)] text-[var(--text-main)] border-l-4 border-[var(--up-color)]' 
+                      : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-root)] border-l-4 border-transparent'
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
       </header>
 
       <main className="flex-1 max-w-[1600px] w-full mx-auto p-4 md:p-6 flex flex-col gap-6 relative">
         <Outlet />
       </main>
 
-      {/* 30-Second Animated News Popup */}
       {showNotification && activeNews && !isBlocked && (
         <div className="fixed bottom-6 right-6 z-50 bg-[#3b82f6] text-white p-4 rounded-lg shadow-2xl flex items-start gap-4 max-w-sm border border-blue-400 animate-bounce">
           <div className="bg-white/20 p-2 rounded-full animate-pulse flex-shrink-0">
@@ -208,14 +239,13 @@ export default function MainLayout() {
         </div>
       )}
 
-      {/* ANTI-CHEAT FULL SCREEN BLOCKER */}
       {isBlocked && (
         <div className="fixed inset-0 z-[9999] bg-[var(--bg-root)] flex flex-col items-center justify-center p-4">
           <div className="animate-pulse flex flex-col items-center gap-6">
             <div className="w-24 h-24 rounded-full bg-[var(--bg-card)] border-4 border-[var(--border-subtle)] flex items-center justify-center shadow-2xl">
               <Activity className="w-12 h-12 text-[var(--text-muted)]" />
             </div>
-            <h1 className="text-2xl font-bold text-[var(--text-main)] tracking-widest uppercase">
+            <h1 className="text-2xl font-bold text-[var(--text-main)] tracking-widest uppercase text-center">
               {isFrozen ? "Account Suspended" : "Market Paused"}
             </h1>
             <p className="text-[var(--text-muted)] font-mono text-sm max-w-md text-center leading-relaxed">

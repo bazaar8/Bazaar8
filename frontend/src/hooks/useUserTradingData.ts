@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, doc, onSnapshot, query, where, limit } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where, limit, orderBy } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
 import type { Holding, Order } from "../types/database";
@@ -11,7 +11,6 @@ export function useUserTradingData() {
   const [longHoldings, setLongHoldings] = useState<Holding[]>([]);
   const [shortHoldings, setShortHoldings] = useState<Holding[]>([]);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
-  const [watchlist, setWatchlist] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -43,31 +42,21 @@ export function useUserTradingData() {
     }, (err) => console.warn("Holdings Error:", err));
 
     const ordersColRef = collection(db, "orders");
-    const ordersQ = query(ordersColRef, where("uid", "==", user.uid));
+    const ordersQ = query(ordersColRef, where("uid", "==", user.uid), orderBy("timestamp", "desc"), limit(10));
     const unsubOrders = onSnapshot(ordersQ, (snap) => {
       const ords: Order[] = [];
       snap.forEach((d) => ords.push(d.data() as Order));
-      ords.sort((a, b) => b.timestamp - a.timestamp);
-      setRecentOrders(ords.slice(0, 10));
+      setRecentOrders(ords);
     }, (err) => console.warn("Orders Error:", err));
 
-    const watchDocRef = doc(db, "users", user.uid, "watchlists", "default");
-    const unsubWatch = onSnapshot(watchDocRef, (snap) => {
-      if (snap.exists()) {
-        setWatchlist(snap.data().tickers || []);
-      } else {
-        setWatchlist(["RELIANCE", "TCS", "HDFCBANK", "INFY"]);
-      }
-      setLoading(false);
-    }, (err) => { console.warn("Watchlist Error:", err); setLoading(false); });
+    setLoading(false);
 
     return () => {
       unsubUser();
       unsubHoldings();
       unsubOrders();
-      unsubWatch();
     };
   }, [user]);
 
-  return { cashBalance, startingBalance, longHoldings, shortHoldings, recentOrders, watchlist, loading };
+  return { cashBalance, startingBalance, longHoldings, shortHoldings, recentOrders, loading };
 }

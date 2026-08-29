@@ -8,17 +8,14 @@ import { Search, Filter, Star, X } from "lucide-react";
 
 export default function Stocks() {
   const { prices, marketStatus } = useLivePrices();
-  // We pull addStock and removeStock directly from your hook!
   const { watchlists, addStock, removeStock } = useWatchlists();
   
   const [search, setSearch] = useState("");
   const [selectedListId, setSelectedListId] = useState("ALL"); 
-  
-  // New state to control our popup menu
+
   const [managingTicker, setManagingTicker] = useState<string | null>(null);
 
   const ALL_MARKETS = useMemo(() => {
-    // ONLY load stocks that actually exist in the live Firebase prices database
     return Object.entries(prices).map(([ticker, data]: [string, any]) => {
       const catalogStock = STOCKS_CATALOG.find(s => s.ticker === ticker);
       return {
@@ -40,7 +37,6 @@ export default function Stocks() {
 
   const activeList = watchlists.find(w => w.id === selectedListId);
 
-  // Filter by Search text AND selected Watchlist
   const filtered = enrichedStocks.filter((s) => {
     const matchSearch =
       s.ticker.toLowerCase().includes(search.toLowerCase()) ||
@@ -172,7 +168,6 @@ export default function Stocks() {
         </div>
       </div>
 
-      {/* WATCHLIST MANAGER POPUP */}
       {managingTicker && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 z-50">
           <div className="terminal-card max-w-sm w-full p-4 shadow-2xl">

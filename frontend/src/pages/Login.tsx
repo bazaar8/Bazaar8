@@ -1,4 +1,5 @@
-import { useState, FormEvent, useEffect } from "react";
+import { useState, useEffect } from "react";
+import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ShieldAlert, ArrowRight, Lock, Mail, TrendingUp, Activity, BarChart2 } from "lucide-react";

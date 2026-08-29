@@ -25,7 +25,6 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
         })).sort((a, b) => a.timestamp - b.timestamp);
         setHistory(parsed);
       } else {
-         // THE FIX: Draw starting price if DB history is empty
          setHistory([{ 
            time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }), 
            price: basePrice 

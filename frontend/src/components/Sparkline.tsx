@@ -26,7 +26,6 @@ export default function Sparkline({ data, isPositive, width = "100%", height = 3
     return [x, y];
   });
 
-  // Smooth Bezier Curve Algorithm
   const smoothPath = (pts: [number, number][]) => {
     let d = `M ${pts[0][0]},${pts[0][1]}`;
     for (let i = 0; i < pts.length - 1; i++) {
@@ -35,7 +34,7 @@ export default function Sparkline({ data, isPositive, width = "100%", height = 3
       const p2 = pts[i + 1];
       const p3 = pts[i + 2 >= pts.length ? i + 1 : i + 2];
 
-      const tension = 0.15; // Lower tension = smoother curves
+      const tension = 0.15; 
       const cp1x = p1[0] + (p2[0] - p0[0]) * tension;
       const cp1y = p1[1] + (p2[1] - p0[1]) * tension;
       const cp2x = p2[0] - (p3[0] - p1[0]) * tension;

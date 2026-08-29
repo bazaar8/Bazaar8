@@ -1,5 +1,4 @@
 export interface User {
-  uid: string;
   displayName: string;
   email: string;
   role: 'student' | 'admin';
@@ -18,10 +17,10 @@ export interface Holding {
 export interface Order {
   uid: string;
   ticker: string;
-  side: 'buy' | 'sell' | 'short' | 'cover';
+  side: 'BUY' | 'SELL' | 'SHORT' | 'COVER';
   quantity: number;
   priceAtExecution: number;
-  timestamp: number;
+  timestamp: any;
   status: 'pending' | 'completed' | 'rejected';
 }
 

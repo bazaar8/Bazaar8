@@ -21,7 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthChanges(async (currentUser) => {
-      setLoading(true); // <-- This forces the router to wait for the profile
+      setLoading(true);
       setUser(currentUser);
       if (currentUser) {
         try {

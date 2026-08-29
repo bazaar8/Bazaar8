@@ -21,9 +21,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
   const [candles, setCandles] = useState<Candle[]>([]);
   const [hoverData, setHoverData] = useState<{ time: string; price: number; x: number; y: number } | null>(null);
 
-  // 1. Fetch data and build 3-Minute Candles
   useEffect(() => {
-    // Fetch last 900 ticks (approx 3 hours of 12-second ticks) to fill the 60-candle view
     const historyRef = query(ref(rtdb, `priceHistory/${ticker}`), limitToLast(900));
     const unsub = onValue(historyRef, (snap) => {
       if (snap.exists()) {
@@ -33,7 +31,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
           price: data[ts]
         })).sort((a, b) => a.ts - b.ts);
 
-        const bucketSize = 180000; // EXACTLY 3 MINUTES
+        const bucketSize = 180000; 
         const grouped = new Map<number, number[]>();
         
         rawTicks.forEach(tick => {
@@ -70,7 +68,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     return () => unsub();
   }, [ticker, basePrice]);
 
-  // 2. Push live updates to the current active candle
   useEffect(() => {
     if (!currentPrice || candles.length === 0) return;
     setCandles((prev) => {
@@ -84,7 +81,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     });
   }, [currentPrice]);
 
-  // 3. Draw the canvas (Right-aligned standard layout)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
@@ -106,7 +102,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
 
     ctx.clearRect(0, 0, width, height);
 
-    // Calculate Y-Axis bounds
     const prices = candles.flatMap((c) => [c.high, c.low]);
     const minPrice = Math.min(...prices) * 0.998;
     const maxPrice = Math.max(...prices) * 1.002;
@@ -118,7 +113,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     const upColor = "#089981";
     const downColor = "#f23645";
 
-    // Draw horizontal grid lines
     ctx.strokeStyle = gridColor;
     ctx.lineWidth = 1;
     for (let i = 0; i <= 5; i++) {
@@ -135,17 +129,14 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       ctx.fillText(priceVal.toFixed(2), chartWidth + 8, y + 4);
     }
 
-    // X-Axis Scale Math (Locks chart to 60 visible slots, aligned right)
     const maxVisibleCandles = 60;
     const xSpace = chartWidth / maxVisibleCandles;
-    const candleWidth = Math.max(4, xSpace * 0.6); // Lock max width so it never balloons
-
+    const candleWidth = Math.max(4, xSpace * 0.6); 
     candles.forEach((candle, idx) => {
-      // Shift calculation from left-aligned to right-aligned
       const distanceFromRight = (candles.length - 1 - idx) * xSpace;
       const x = chartWidth - 15 - distanceFromRight;
 
-      if (x < 0) return; // Hide candles that scroll off the left edge
+      if (x < 0) return; 
 
       const yOpen = chartHeight - ((candle.open - minPrice) / range) * chartHeight;
       const yClose = chartHeight - ((candle.close - minPrice) / range) * chartHeight;
@@ -155,7 +146,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       const isUp = candle.close >= candle.open;
       const color = isUp ? upColor : downColor;
 
-      // Draw Wick
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -163,14 +153,12 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       ctx.lineTo(x, yLow);
       ctx.stroke();
 
-      // Draw Body
       ctx.fillStyle = color;
       const rectY = Math.min(yOpen, yClose);
       const rectH = Math.max(1, Math.abs(yOpen - yClose));
       ctx.fillRect(x - candleWidth / 2, rectY, candleWidth, rectH);
     });
 
-    // Draw Current Live Price Marker
     const last = candles[candles.length - 1];
     const lastY = chartHeight - ((last.close - minPrice) / range) * chartHeight;
     const lastColor = last.close >= last.open ? upColor : downColor;
@@ -190,7 +178,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     ctx.textAlign = "left";
     ctx.fillText(last.close.toFixed(2), chartWidth + 6, lastY + 3);
 
-    // Draw Hover Crosshair
     if (hoverData) {
       ctx.setLineDash([2, 2]);
       ctx.strokeStyle = isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)";
@@ -205,7 +192,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     }
   }, [candles, hoverData]);
 
-  // Hover Interaction Mapper (Re-mapped for right-alignment)
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;

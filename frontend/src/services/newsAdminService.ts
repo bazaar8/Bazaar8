@@ -5,7 +5,6 @@ import type { NewsEventAdmin } from "../types/news";
 
 const functions = getFunctions(app);
 
-// Imports remain direct to Firestore because firestore.rules allows admins to write here
 export const importNewsEvents = async (events: Omit<NewsEventAdmin, "id" | "createdAt" | "status" | "startTime">[]) => {
   const promises = events.map(async (event) => {
     const eventRef = doc(collection(db, "newsEvents"));
@@ -21,7 +20,6 @@ export const importNewsEvents = async (events: Omit<NewsEventAdmin, "id" | "crea
   await Promise.all(promises);
 };
 
-// Actions routed securely through Cloud Functions
 export const releaseEventNow = async (eventId: string, adminData: NewsEventAdmin, durationMinutes: number) => {
   const releaseFn = httpsCallable(functions, 'adminReleaseNews');
   await releaseFn({ eventId, adminData, durationMinutes });

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { httpsCallable } from "../config/api";
 import { getDatabase, ref, onValue } from "firebase/database";
 import { getFirestore, collection, onSnapshot, query, orderBy, limit, addDoc, doc, updateDoc} from "firebase/firestore";
 import { sendPasswordResetEmail } from "firebase/auth";

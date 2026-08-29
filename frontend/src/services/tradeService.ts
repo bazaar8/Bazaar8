@@ -1,4 +1,4 @@
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { httpsCallable } from "../config/api";
 import { app } from "../config/firebase";
 
 const functions = getFunctions(app);

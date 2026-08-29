@@ -1,5 +1,4 @@
-import { httpsCallable } from "firebase/functions";
-import { functions } from "../config/firebase"; 
+import { httpsCallable } from "../config/api";
 
 export const setMarketStatus = async (status: 'OPEN' | 'PAUSED' | 'CLOSED') => {
   const setStatusFn = httpsCallable(functions, 'adminSetMarketStatus');

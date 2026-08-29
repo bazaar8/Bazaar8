@@ -295,9 +295,9 @@ export default function AdminDashboard() {
       await addDoc(collection(db, "ipos"), {
         name: ipoName, 
         ticker: ipoTicker.toUpperCase(), 
-        price: parseFloat(ipoPrice), 
-        lotSize: parseInt(ipoLotSize),           
-        totalLots: parseInt(ipoTotalLots),       
+        price: parseFloat(ipoPrice) || 0, 
+        lotSize: parseInt(ipoLotSize, 10) || 1,           
+        totalLots: parseInt(ipoTotalLots, 10) || 1,       
         listingPremiumPct: parseFloat(ipoPremium) || 0, 
         sector: "Upcoming", 
         allotmentType: "lottery",                

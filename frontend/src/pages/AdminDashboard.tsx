@@ -50,7 +50,6 @@ export default function AdminDashboard() {
   
   const [adminLogs, setAdminLogs] = useState<any[]>([]);
   
-  const functions = getFunctions(app);
   const rtdb = getDatabase(app);
   const db = getFirestore(app);
 
@@ -109,7 +108,7 @@ export default function AdminDashboard() {
     setProcessingAction(`market-${status}`);
     logAdminAction("SET_MARKET_STATE", { state: status });
     try {
-      const fn = httpsCallable(functions, 'adminSetMarketStatus');
+      const fn = httpsCallable('adminSetMarketStatus');
       await fn({ status });
     } catch (err: any) { alert("Error: " + err.message); } 
     finally { setProcessingAction(null); }
@@ -120,7 +119,7 @@ export default function AdminDashboard() {
       setProcessingAction('force-price');
       logAdminAction("FORCE_PRICE", { ticker: forceTicker, newPrice: forcePrice });
       try {
-        const fn = httpsCallable(functions, 'adminForceStockPrice');
+        const fn = httpsCallable('adminForceStockPrice');
         await fn({ ticker: forceTicker.toUpperCase(), price: parseFloat(forcePrice) });
         setForceTicker(""); setForcePrice("");
       } catch (err: any) { alert("Error: " + err.message); } 
@@ -132,7 +131,7 @@ export default function AdminDashboard() {
     setProcessingAction(`freeze-${uid}`);
     logAdminAction("TOGGLE_FREEZE", { targetUserId: uid, isFrozen });
     try {
-      const fn = httpsCallable(functions, 'adminToggleUserFreeze');
+      const fn = httpsCallable('adminToggleUserFreeze');
       await fn({ uid, isFrozen });
     } catch (err: any) { alert("Error: " + err.message); } 
     finally { setProcessingAction(null); }
@@ -165,7 +164,7 @@ export default function AdminDashboard() {
     setProcessingAction("reset");
     logAdminAction("FACTORY_RESET", { target: "ENTIRE_SYSTEM" });
     try {
-      const fn = httpsCallable(functions, 'adminResetSystem');
+      const fn = httpsCallable('adminResetSystem');
       await fn();
       alert("System has been completely reset.");
     } catch (err: any) { alert("Error resetting system: " + err.message); } 
@@ -177,7 +176,7 @@ export default function AdminDashboard() {
       setProcessingAction(`delete-${ticker}`);
       logAdminAction("DELETE_STOCK", { ticker });
       try {
-        await httpsCallable(functions, 'adminDeleteStock')({ ticker });
+        await httpsCallable('adminDeleteStock')({ ticker });
       } catch (err: any) { alert("Error deleting stock: " + err.message); }
       finally { setProcessingAction(null); }
     }
@@ -192,7 +191,7 @@ export default function AdminDashboard() {
     setProcessingAction(`edit-${ticker}`);
     logAdminAction("EDIT_STOCK", { ticker, newBase, newVol });
     try {
-      await httpsCallable(functions, 'adminUpdateStock')({ 
+      await httpsCallable('adminUpdateStock')({ 
         ticker, basePrice: newBase, volatility: newVol, name: currentData.name || ticker, sector: currentData.sector || "General"
       });
     } catch (err: any) { alert("Error updating stock: " + err.message); }
@@ -264,8 +263,8 @@ export default function AdminDashboard() {
     logAdminAction("IMPORT_CSV", { type: csvType, recordCount: parsedData.length });
     try {
       if (csvType === "news") await importNewsEvents(parsedData);
-      else if (csvType === "users") await httpsCallable(functions, 'adminImportUsers')({ users: parsedData });
-      else if (csvType === "stocks") await httpsCallable(functions, 'adminImportStocks')({ stocks: parsedData });
+      else if (csvType === "users") await httpsCallable( 'adminImportUsers')({ users: parsedData });
+      else if (csvType === "stocks") await httpsCallable('adminImportStocks')({ stocks: parsedData });
       
       setParsedData([]); setCsvText(""); alert(`Successfully imported ${parsedData.length} records!`);
     } catch (err: any) { alert("Import Failed: " + err.message); } 

@@ -1,9 +1,7 @@
 import { collection, doc, setDoc } from "firebase/firestore";
 import { httpsCallable } from "../config/api";
-import { db, app } from "../config/firebase";
+import { db } from "../config/firebase";
 import type { NewsEventAdmin } from "../types/news";
-
-const functions = getFunctions(app);
 
 export const importNewsEvents = async (events: Omit<NewsEventAdmin, "id" | "createdAt" | "status" | "startTime">[]) => {
   const promises = events.map(async (event) => {
@@ -21,16 +19,16 @@ export const importNewsEvents = async (events: Omit<NewsEventAdmin, "id" | "crea
 };
 
 export const releaseEventNow = async (eventId: string, adminData: NewsEventAdmin, durationMinutes: number) => {
-  const releaseFn = httpsCallable(functions, 'adminReleaseNews');
+  const releaseFn = httpsCallable('adminReleaseNews');
   await releaseFn({ eventId, adminData, durationMinutes });
 };
 
 export const pauseEvent = async (eventId: string) => {
-  const pauseFn = httpsCallable(functions, 'adminPauseNews');
+  const pauseFn = httpsCallable('adminPauseNews');
   await pauseFn({ eventId });
 };
 
 export const cancelEvent = async (eventId: string) => {
-  const cancelFn = httpsCallable(functions, 'adminCancelNews');
+  const cancelFn = httpsCallable('adminCancelNews');
   await cancelFn({ eventId });
 };

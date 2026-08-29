@@ -15,8 +15,6 @@ export default function IPO() {
   const [selectedIpo, setSelectedIpo] = useState<any | null>(null);
   const [lotsToApply, setLotsToApply] = useState(1);
 
-  const functions = getFunctions(app);
-
   useEffect(() => {
     const unsubIpos = onSnapshot(collection(db, "ipos"), (snap) => {
       setIpos(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -44,7 +42,7 @@ export default function IPO() {
     
     setProcessingIpoId(selectedIpo.id);
     try {
-      const fn = httpsCallable(functions, 'subscribeIPO');
+      const fn = httpsCallable('subscribeIPO');
       const totalShares = lotsToApply * (Number(selectedIpo.lotSize) || 1);
       
       await fn({ 

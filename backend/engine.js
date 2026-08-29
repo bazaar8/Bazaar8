@@ -1,8 +1,8 @@
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getDatabase } = require("firebase-admin/database");
-const serviceAccount = require("./serviceAccountKey.json");
-const serviceAccount = process.env.SERVICE_ACCOUNT_JSON
+
+const serviceAccount = process.env.SERVICE_ACCOUNT_JSON // <-- THIS IS THE SECOND DECLARATION (ERROR!)
   ? JSON.parse(process.env.SERVICE_ACCOUNT_JSON)
   : require("./serviceAccountKey.json");
 

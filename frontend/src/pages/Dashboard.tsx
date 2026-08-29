@@ -9,7 +9,6 @@ import { db } from "../config/firebase";
 import { ArrowRight, TrendingUp, TrendingDown } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-// Custom Tooltip for the Area Chart
 const CustomTooltip = ({ active, payload, label, safeStarting }: any) => {
   if (active && payload && payload.length) {
     const val = payload[0].value;
@@ -34,7 +33,6 @@ export default function Dashboard() {
   const [newsEvents, setNewsEvents] = useState<any[]>([]);
   const [showGainers, setShowGainers] = useState(true);
   const [activeListId, setActiveListId] = useState<string | null>(null);
-
   const [liveChartData, setLiveChartData] = useState<{time: string, value: number}[]>([]);
 
   useEffect(() => {
@@ -83,15 +81,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (totalPortfolioValue === 0) return;
-    
     setLiveChartData(prev => {
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-
-      if (prev.length > 0 && prev[prev.length - 1].time === timeStr && prev[prev.length - 1].value === totalPortfolioValue) {
-        return prev;
-      }
-      
+      if (prev.length > 0 && prev[prev.length - 1].time === timeStr && prev[prev.length - 1].value === totalPortfolioValue) return prev;
       const newData = [...prev, { time: timeStr, value: totalPortfolioValue }];
       if (newData.length > 40) newData.shift();
       return newData;
@@ -112,85 +105,37 @@ export default function Dashboard() {
   const topGainers = [...enrichedStocks].sort((a, b) => b.changePct - a.changePct).slice(0, 5);
   const topLosers = [...enrichedStocks].sort((a, b) => a.changePct - b.changePct).slice(0, 5);
   const displayList = showGainers ? topGainers : topLosers;
-
-  const bazaarIndexValue = allMarkets.reduce((sum, s) => sum + (prices[s.ticker]?.price || s.basePrice || 0), 0);
-  const bazaarIndexBase = allMarkets.reduce((sum, s) => sum + (s.basePrice || 0), 0);
-  const bazaarIndexChange = bazaarIndexBase > 0 ? ((bazaarIndexValue - bazaarIndexBase) / bazaarIndexBase) * 100 : 0;
   
-  const chartColor = totalPL >= 0 ? '#089981' : '#f23645';
+  const chartColor = totalPL >= 0 ? 'var(--up-color)' : 'var(--down-color)';
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
-
-      <div className="w-full lg:w-[240px] flex flex-col gap-4">
-        <div className="terminal-card p-4 flex flex-col h-full">
-          <div className="flex items-center justify-between mb-3 border-b border-[var(--border-subtle)] pb-2">
-            <h2 className="text-xs font-bold text-[var(--text-main)] uppercase tracking-widest">Watchlists</h2>
-            <Link to="/watchlists" className="text-[10px] text-[var(--up-color)] font-medium hover:underline">Manage</Link>
-          </div>
-          
-          <select
-            value={activeListId || ""}
-            onChange={(e) => setActiveListId(e.target.value)}
-            className="w-full bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs font-bold p-1.5 rounded mb-3 focus:outline-none"
-          >
-            {watchlists.length === 0 && <option value="">No lists found</option>}
-            {watchlists.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
-          
-          <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto">
-            {!activeList || activeList.tickers.length === 0 ? (
-              <div className="text-[10px] text-[var(--text-muted)] font-mono text-center py-4">No tickers in this list.</div>
-            ) : (
-              activeList.tickers.map(ticker => {
-                const stock = enrichedStocks.find(s => s.ticker === ticker);
-                if (!stock) return null;
-                const isUp = stock.change >= 0;
-
-                return (
-                  <Link key={ticker} to={`/stocks/${ticker}`} className="flex items-center justify-between px-3 py-2 bg-[var(--bg-root)] rounded border border-[var(--border-subtle)] hover:border-[var(--up-color)] transition-colors group">
-                    <span className="text-xs font-bold text-[var(--text-main)] group-hover:text-[var(--up-color)]">{ticker}</span>
-                    <div className="flex flex-col items-end">
-                      <span className="text-[10px] font-mono text-[var(--text-main)]">₹{stock.currentPrice.toFixed(2)}</span>
-                      <span className={`text-[9px] font-mono font-bold ${isUp ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
-                        {isUp ? '+' : ''}{stock.changePct.toFixed(2)}%
-                      </span>
-                    </div>
-                  </Link>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </div>
-
       <div className="flex-1 flex flex-col gap-4 lg:gap-6 min-w-0">
-
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-          <div className="terminal-card p-4">
+          <div className="terminal-card bg-[var(--bg-card)] p-4 border border-[var(--border-subtle)]">
             <div className="text-[11px] text-[var(--text-muted)] mb-1 uppercase tracking-wider font-bold">Total Portfolio</div>
             <div className="text-xl font-bold text-[var(--text-main)] font-mono">
               ₹{totalPortfolioValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div className={`text-[10px] font-mono font-medium mt-1 ${totalPL >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
+            <div className={`text-[10px] font-mono font-bold mt-1 ${totalPL >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
               {totalPL >= 0 ? "+" : ""}₹{totalPL.toLocaleString("en-IN")} ({returnPct >= 0 ? "+" : ""}{returnPct.toFixed(2)}%)
             </div>
           </div>
-          <div className="terminal-card p-4">
+          <div className="terminal-card bg-[var(--bg-card)] p-4 border border-[var(--border-subtle)]">
             <div className="text-[11px] text-[var(--text-muted)] mb-1 uppercase tracking-wider font-bold">Starting Capital</div>
             <div className="text-xl font-bold text-[var(--text-main)] font-mono">
               ₹{safeStarting.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">Base Benchmark</div>
           </div>
-          <div className="terminal-card p-4">
+          <div className="terminal-card bg-[var(--bg-card)] p-4 border border-[var(--border-subtle)]">
             <div className="text-[11px] text-[var(--text-muted)] mb-1 uppercase tracking-wider font-bold">Today's P&L</div>
             <div className={`text-xl font-bold font-mono flex items-center gap-1 ${totalPL >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
               {totalPL >= 0 ? <TrendingUp className="w-4 h-4"/> : <TrendingDown className="w-4 h-4"/>}
               {totalPL >= 0 ? "+" : ""}₹{Math.abs(totalPL).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
-          <div className="terminal-card p-4">
+          <div className="terminal-card bg-[var(--bg-card)] p-4 border border-[var(--border-subtle)]">
             <div className="text-[11px] text-[var(--text-muted)] mb-1 uppercase tracking-wider font-bold">Available Cash</div>
             <div className="text-xl font-bold text-[var(--text-main)] font-mono">
               ₹{safeCash.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -199,13 +144,13 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="terminal-card p-4 flex flex-col">
+        <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-4 flex flex-col">
           <div className="flex items-center justify-between mb-4 border-b border-[var(--border-subtle)] pb-4">
             <h3 className="text-sm font-bold text-[var(--text-main)] flex items-center gap-2 tracking-widest uppercase">
               {totalPL >= 0 ? <TrendingUp className="w-5 h-5 text-[var(--up-color)]" /> : <TrendingDown className="w-5 h-5 text-[var(--down-color)]" />}
-              Portfolio Net Worth Trajectory (Live Area Chart)
+              Portfolio Net Worth Trajectory
             </h3>
-            <div className={`px-4 py-1.5 rounded text-sm font-black font-mono border ${totalPL >= 0 ? 'bg-[#08998115] text-[var(--up-color)] border-[#08998130]' : 'bg-[#f2364515] text-[var(--down-color)] border-[#f2364530]'}`}>
+            <div className={`px-4 py-1.5 rounded text-sm font-black font-mono border ${totalPL >= 0 ? 'bg-[var(--up-color)]/10 text-[var(--up-color)] border-[var(--up-color)]' : 'bg-[var(--down-color)]/10 text-[var(--down-color)] border-[var(--down-color)]'}`}>
               ₹{totalPortfolioValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
@@ -214,7 +159,7 @@ export default function Dashboard() {
               <AreaChart data={liveChartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={chartColor} stopOpacity={0.3}/>
+                    <stop offset="5%" stopColor={chartColor} stopOpacity={0.4}/>
                     <stop offset="95%" stopColor={chartColor} stopOpacity={0}/>
                   </linearGradient>
                 </defs>
@@ -229,11 +174,10 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-6">
-          {/* Live Market Feed */}
-          <div className="terminal-card p-4">
+          <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-4">
             <div className="flex items-center justify-between mb-4 border-b border-[var(--border-subtle)] pb-3">
               <h3 className="text-sm font-bold text-[var(--text-main)]">Live Market Feed</h3>
-              <span className="text-[10px] text-[var(--text-muted)]">Event Count Today: <strong className="text-[var(--text-main)]">{newsEvents.length.toString().padStart(2, '0')}</strong></span>
+              <span className="text-[10px] text-[var(--text-muted)]">Event Count: <strong className="text-[var(--text-main)]">{newsEvents.length.toString().padStart(2, '0')}</strong></span>
             </div>
             <div className="space-y-4">
               {newsEvents.length === 0 ? (
@@ -256,43 +200,50 @@ export default function Dashboard() {
             </Link>
           </div>
 
-          <div className="terminal-card p-4">
-            <div className="flex items-center justify-between mb-4 border-b border-[var(--border-subtle)] pb-3">
-              <h3 className="text-sm font-bold text-[var(--text-main)]">Market Overview</h3>
+          <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-4 flex flex-col">
+            <div className="flex items-center justify-between mb-3 border-b border-[var(--border-subtle)] pb-2">
+              <h2 className="text-sm font-bold text-[var(--text-main)]">Watchlists</h2>
+              <Link to="/watchlists" className="text-[10px] text-[var(--up-color)] font-medium hover:underline">Manage</Link>
             </div>
-            <div className="space-y-4">
-              
-              <div className="flex items-center justify-between text-xs font-mono p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded">
-                <div className="w-32 text-[var(--text-main)] font-bold font-sans tracking-widest uppercase text-[10px]">BAZAAR INDEX</div>
-                <div className="w-24 text-[var(--text-main)] text-right font-bold">
-                  {bazaarIndexValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                </div>
-                <div className={`w-16 text-right font-bold ${bazaarIndexChange >= 0 ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
-                  {bazaarIndexChange >= 0 ? '+' : ''}{bazaarIndexChange.toFixed(2)}%
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between text-xs font-mono px-3">
-                <div className="w-32 text-[var(--text-muted)] font-bold font-sans text-[10px]">TOTAL ASSETS</div>
-                <div className="w-24 text-[var(--text-muted)] text-right">{allMarkets.length} Equities</div>
-                <div className="w-16 text-right text-[var(--text-muted)]">--</div>
-              </div>
-              
-              <div className="flex items-center justify-between text-xs font-mono px-3">
-                <div className="w-32 text-[var(--text-muted)] font-bold font-sans text-[10px]">ENGINE STATE</div>
-                <div className={`w-24 text-right font-bold ${marketStatus === 'OPEN' ? 'text-green-500' : 'text-amber-500'}`}>{marketStatus}</div>
-                <div className="w-16 text-right text-[var(--text-muted)]">--</div>
-              </div>
-
+            
+            <select
+              value={activeListId || ""}
+              onChange={(e) => setActiveListId(e.target.value)}
+              className="w-full bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs font-bold p-2 rounded mb-3 focus:outline-none"
+            >
+              {watchlists.length === 0 && <option value="">No lists found</option>}
+              {watchlists.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            
+            <div className="flex flex-col gap-2 flex-1 overflow-y-auto max-h-[160px]">
+              {!activeList || activeList.tickers.length === 0 ? (
+                <div className="text-[10px] text-[var(--text-muted)] font-mono text-center py-4">No tickers in this list.</div>
+              ) : (
+                activeList.tickers.map(ticker => {
+                  const stock = enrichedStocks.find(s => s.ticker === ticker);
+                  if (!stock) return null;
+                  const isUp = stock.change >= 0;
+                  return (
+                    <Link key={ticker} to={`/stocks/${ticker}`} className="flex items-center justify-between px-3 py-2 bg-[var(--bg-root)] rounded border border-[var(--border-subtle)] hover:border-[var(--up-color)] transition-colors group">
+                      <span className="text-xs font-bold text-[var(--text-main)] group-hover:text-[var(--up-color)]">{ticker}</span>
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] font-mono text-[var(--text-main)]">₹{stock.currentPrice.toFixed(2)}</span>
+                        <span className={`text-[9px] font-mono font-bold ${isUp ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
+                          {isUp ? '+' : ''}{stock.changePct.toFixed(2)}%
+                        </span>
+                      </div>
+                    </Link>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
       </div>
 
       <div className="w-full lg:w-[280px] flex flex-col gap-4">
-        <div className="terminal-card p-4 flex flex-col h-full">
+        <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-4 flex flex-col h-full">
           <h3 className="text-sm font-bold text-[var(--text-main)] mb-4">Market Movers</h3>
-          
           <div className="flex items-center gap-4 border-b border-[var(--border-subtle)] mb-3">
             <button 
               onClick={() => setShowGainers(true)}
@@ -313,19 +264,17 @@ export default function Dashboard() {
               <div key={s.ticker} className="flex items-center justify-between text-xs font-mono">
                 <Link to={`/stocks/${s.ticker}`} className="w-20 text-[var(--text-main)] font-bold font-sans hover:text-[var(--up-color)] transition-colors">{s.ticker}</Link>
                 <div className="text-[var(--text-main)]">₹{s.currentPrice.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</div>
-                <div className={s.changePct >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
+                <div className={`font-bold ${s.changePct >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
                   {s.changePct >= 0 ? "+" : ""}{s.changePct.toFixed(2)}%
                 </div>
               </div>
             ))}
           </div>
-
           <Link to="/stocks" className="inline-flex items-center gap-1 text-[11px] text-[var(--up-color)] font-medium mt-6 hover:underline">
             View All Markets <ArrowRight className="w-3 h-3" />
           </Link>
         </div>
       </div>
-
     </div>
   );
 }

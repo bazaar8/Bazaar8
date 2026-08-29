@@ -18,7 +18,7 @@ const dbFirestore = getFirestore();
 const dbRTDB = getDatabase();
 const authAdmin = getAuth();
 let tickCount = 0;
-
+let forceBasePriceReset = false;
 
 async function runIPOAutomator() {
   console.log("🚀 Auto-IPO Engine active...");
@@ -123,6 +123,9 @@ async function runMarketEngine() {
   const livePricesRef = dbRTDB.ref("livePrices");
   const historyRef = dbRTDB.ref("priceHistory");
   const influenceRef = dbRTDB.ref("marketInfluence");
+  
+  let lastBasePriceReset = Date.now();
+
   setInterval(async () => {
     try {
       if (((await statusRef.once("value")).val() || "CLOSED") !== "OPEN") return;
@@ -134,9 +137,25 @@ async function runMarketEngine() {
       const historyUpdate = {};
       const finishedEvents = new Set();
       
+      let shouldResetBase = false;
+      if (now - lastBasePriceReset >= 180000) {
+        shouldResetBase = true;
+        lastBasePriceReset = now;
+      }
+      if (forceBasePriceReset) {
+        shouldResetBase = true;
+        forceBasePriceReset = false;
+        lastBasePriceReset = now; 
+      }
+      
       for (const ticker of Object.keys(currentPrices)) {
         const stockData = currentPrices[ticker];
         let engineBase = stockData.engineBasePrice || stockData.basePrice || stockData.price;
+        
+        if (shouldResetBase) {
+          engineBase = stockData.price;
+        }
+
         let eventBias = 0, currentTargetMultiplier = 1;
         for (const [eventId, inf] of Object.entries(influences)) {
           if (inf.status === 'active' && inf.impacts && inf.impacts[ticker] !== undefined) {
@@ -406,6 +425,9 @@ app.post('/api/adminReleaseNews', handleCallable(async (data, context) => {
   const now = Date.now();
   await dbFirestore.collection("newsEvents").doc(data.eventId).update({ status: "active", startTime: now, durationMinutes: data.durationMinutes || 15 });
   await dbRTDB.ref(`marketInfluence/${data.eventId}`).set({ id: data.eventId, impacts: data.adminData.stockImpacts, durationMinutes: data.durationMinutes || 15, startTime: now, status: "active" });
+  
+  forceBasePriceReset = true;
+  
   return { success: true };
 }));
 

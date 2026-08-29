@@ -12,7 +12,7 @@ export interface LeaderboardEntry {
 
 export function useLeaderboard() {
   const [rankings, setRankings] = useState<LeaderboardEntry[]>([]);
-  const [countdown, setCountdown] = useState(30);
+  const [countdown, setCountdown] = useState(5);
   const [loading, setLoading] = useState(true);
 
   const fetchLeaderboard = async () => {
@@ -34,7 +34,7 @@ export function useLeaderboard() {
       setCountdown((prev) => {
         if (prev <= 1) {
           fetchLeaderboard();
-          return 30; 
+          return 5; 
         }
         return prev - 1;
       });

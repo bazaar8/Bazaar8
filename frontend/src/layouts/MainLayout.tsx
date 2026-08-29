@@ -7,6 +7,7 @@ import { LogOut, Activity, Bell, Sun, Moon, User, X, Newspaper, Menu } from 'luc
 import { collection, query, limit, onSnapshot, orderBy, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
+
 export default function MainLayout() {
   const { user, profile, logoutUser } = useAuth();
   const navigate = useNavigate();
@@ -112,11 +113,11 @@ export default function MainLayout() {
         <div className="max-w-[1600px] mx-auto px-4 h-16 flex items-center justify-between">
           
           <div className="flex items-center gap-8 h-full">
-            <Link to="/" className="flex items-center gap-2">
-              <Activity className="w-6 h-6 text-[var(--up-color)]" />
-              <span className="font-bold text-lg tracking-tight text-[var(--text-main)]">MarketSim</span>
-            </Link>
-
+            <div className="flex items-center gap-3 px-4 py-2">
+              <img src="/logo.png" alt="Bulls and Bears Logo" className="w-10 h-10" />
+              <span className="font-bold text-lg tracking-tight text-[var(--text-main)]">Bulls and Bears</span>  
+              <span className="font-bold text-lg tracking-tight text-[var(--text-main)]">Bazaar 8.0</span>
+            </div>
             <nav className="hidden lg:flex items-center gap-6 h-full">
               {visibleNavLinks.map(link => {
                 const isActive = location.pathname === link.path || (link.path !== '/' && location.pathname.startsWith(link.path));
@@ -151,8 +152,14 @@ export default function MainLayout() {
               </button>
               
               <button className="hidden sm:block p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)] relative">
-                <Bell className="w-4 h-4" />
-                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-[var(--down-color)] rounded-full border border-[var(--bg-card)]"></span>
+               <Link 
+                  to="/news" 
+                  className="hidden sm:block p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)] relative"
+                  title="News"
+                >
+                  <Bell className="w-5 h-5" />
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-[var(--down-color)] rounded-full border border-[var(--bg-card)]"></span>
+                </Link>
               </button>
               
               {user && (

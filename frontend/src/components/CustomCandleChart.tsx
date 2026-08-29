@@ -20,18 +20,30 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [hoverData, setHoverData] = useState<{ time: string; price: number; x: number; y: number } | null>(null);
+  
+  // Interactive TradingView State
+  const [visibleCount, setVisibleCount] = useState(40); 
+  const [candleOffset, setCandleOffset] = useState(0);  
+  const [priceScale, setPriceScale] = useState(0.15);   
+  
+  const isDraggingX = useRef(false);
+  const isDraggingY = useRef(false);
+  const isDraggingTime = useRef(false);
+  const lastMouseX = useRef(0);
+  const lastMouseY = useRef(0);
 
+  // Fetch & Aggregate Realtime DB ticks
   useEffect(() => {
-    const historyRef = query(ref(rtdb, `priceHistory/${ticker}`), limitToLast(900));
+    const historyRef = query(ref(rtdb, `priceHistory/${ticker}`), limitToLast(1000));
     const unsub = onValue(historyRef, (snap) => {
       if (snap.exists()) {
         const data = snap.val();
         const rawTicks = Object.keys(data).map(ts => ({
           ts: parseInt(ts, 10),
-          price: data[ts]
+          price: Number(data[ts])
         })).sort((a, b) => a.ts - b.ts);
 
-        const bucketSize = 180000; 
+        const bucketSize = 120000; 
         const grouped = new Map<number, number[]>();
         
         rawTicks.forEach(tick => {
@@ -40,24 +52,19 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
           grouped.get(bucket)!.push(tick.price);
         });
 
-        const processedCandles: Candle[] = [];
-        const sortedBuckets = Array.from(grouped.keys()).sort();
-
-        sortedBuckets.forEach(bucketTs => {
+        const processed: Candle[] = [];
+        Array.from(grouped.keys()).sort().forEach(bucketTs => {
           const prices = grouped.get(bucketTs)!;
-          const open = prices[0];
-          const close = prices[prices.length - 1];
-          const high = Math.max(...prices);
-          const low = Math.min(...prices);
-          processedCandles.push({
+          processed.push({
             time: new Date(bucketTs).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-            open, high, low, close
+            open: prices[0],
+            high: Math.max(...prices),
+            low: Math.min(...prices),
+            close: prices[prices.length - 1]
           });
         });
 
-        if (processedCandles.length > 0) {
-          setCandles(processedCandles);
-        }
+        if (processed.length > 0) setCandles(processed);
       } else {
         setCandles([{
           time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
@@ -81,6 +88,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     });
   }, [currentPrice]);
 
+  // Canvas Drawing
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
@@ -95,53 +103,69 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
 
     const width = rect.width;
     const height = rect.height;
-    const rightMargin = 60;
-    const bottomMargin = 24;
+    const rightMargin = 65;
+    const bottomMargin = 26;
     const chartWidth = width - rightMargin;
     const chartHeight = height - bottomMargin;
 
+    // Drawing area safe zones to prevent wick clipping
+    const yOffset = 15;
+    const effectiveHeight = chartHeight - (yOffset * 2);
+
     ctx.clearRect(0, 0, width, height);
 
-    const prices = candles.flatMap((c) => [c.high, c.low]);
-    const minPrice = Math.min(...prices) * 0.998;
-    const maxPrice = Math.max(...prices) * 1.002;
+    const maxOffset = Math.max(0, candles.length - visibleCount);
+    const safeOffset = Math.max(0, Math.min(candleOffset, maxOffset));
+    const endIndex = candles.length - Math.floor(safeOffset);
+    const startIndex = Math.max(0, endIndex - visibleCount);
+    const visibleCandles = candles.slice(startIndex, endIndex);
+
+    if (visibleCandles.length === 0) return;
+
+    const prices = visibleCandles.flatMap((c) => [c.high, c.low]);
+    const rawMin = Math.min(...prices);
+    const rawMax = Math.max(...prices);
+    const pad = Math.max((rawMax - rawMin) * priceScale, 1.5);
+    const minPrice = rawMin - pad;
+    const maxPrice = rawMax + pad;
     const range = maxPrice - minPrice || 1;
 
-    const isDark = document.documentElement.classList.contains("dark");
-    const gridColor = isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.05)";
-    const textColor = isDark ? "#787b86" : "#6b7280";
-    const upColor = "#089981";
-    const downColor = "#f23645";
+    const style = getComputedStyle(document.documentElement);
+    const upColor = style.getPropertyValue('--up-color').trim() || '#089981';
+    const downColor = style.getPropertyValue('--down-color').trim() || '#f23645';
+    const textColor = style.getPropertyValue('--text-muted').trim() || '#94a3b8';
+    const gridColor = 'rgba(255, 255, 255, 0.04)';
 
-    ctx.strokeStyle = gridColor;
     ctx.lineWidth = 1;
-    for (let i = 0; i <= 5; i++) {
-      const y = (chartHeight / 5) * i;
+    const gridSteps = 5;
+    for (let i = 0; i <= gridSteps; i++) {
+      const y = yOffset + Math.round((effectiveHeight / gridSteps) * i);
+      ctx.strokeStyle = gridColor;
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(chartWidth, y);
       ctx.stroke();
 
-      const priceVal = maxPrice - (range / 5) * i;
+      const priceVal = maxPrice - (range / gridSteps) * i;
       ctx.fillStyle = textColor;
       ctx.font = "10px monospace";
       ctx.textAlign = "left";
-      ctx.fillText(priceVal.toFixed(2), chartWidth + 8, y + 4);
+      ctx.fillText(priceVal.toFixed(2), chartWidth + 8, y + 3.5);
     }
 
-    const maxVisibleCandles = 60;
-    const xSpace = chartWidth / maxVisibleCandles;
-    const candleWidth = Math.max(4, xSpace * 0.6); 
-    candles.forEach((candle, idx) => {
-      const distanceFromRight = (candles.length - 1 - idx) * xSpace;
-      const x = chartWidth - 15 - distanceFromRight;
+    const slotWidth = chartWidth / visibleCount;
+    const candleWidth = Math.max(2, slotWidth * 0.6);
 
-      if (x < 0) return; 
+    visibleCandles.forEach((candle, idx) => {
+      const fractionalOffset = candleOffset % 1;
+      const x = (idx * slotWidth) + (slotWidth / 2) + (fractionalOffset * slotWidth);
 
-      const yOpen = chartHeight - ((candle.open - minPrice) / range) * chartHeight;
-      const yClose = chartHeight - ((candle.close - minPrice) / range) * chartHeight;
-      const yHigh = chartHeight - ((candle.high - minPrice) / range) * chartHeight;
-      const yLow = chartHeight - ((candle.low - minPrice) / range) * chartHeight;
+      if (x < 0 || x > chartWidth) return;
+
+      const yOpen = yOffset + effectiveHeight - ((candle.open - minPrice) / range) * effectiveHeight;
+      const yClose = yOffset + effectiveHeight - ((candle.close - minPrice) / range) * effectiveHeight;
+      const yHigh = yOffset + effectiveHeight - ((candle.high - minPrice) / range) * effectiveHeight;
+      const yLow = yOffset + effectiveHeight - ((candle.low - minPrice) / range) * effectiveHeight;
 
       const isUp = candle.close >= candle.open;
       const color = isUp ? upColor : downColor;
@@ -154,33 +178,44 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       ctx.stroke();
 
       ctx.fillStyle = color;
-      const rectY = Math.min(yOpen, yClose);
-      const rectH = Math.max(1, Math.abs(yOpen - yClose));
-      ctx.fillRect(x - candleWidth / 2, rectY, candleWidth, rectH);
+      const topY = Math.min(yOpen, yClose);
+      const bodyH = Math.max(1.5, Math.abs(yOpen - yClose));
+      ctx.fillRect(x - candleWidth / 2, topY, candleWidth, bodyH);
+
+      const labelInterval = Math.max(1, Math.floor(visibleCount / 6));
+      if (idx % labelInterval === 0) {
+        ctx.fillStyle = textColor;
+        ctx.font = "9px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(candle.time, x, height - 6);
+      }
     });
 
-    const last = candles[candles.length - 1];
-    const lastY = chartHeight - ((last.close - minPrice) / range) * chartHeight;
-    const lastColor = last.close >= last.open ? upColor : downColor;
+    if (candleOffset < 1) {
+      const last = candles[candles.length - 1];
+      const lastY = yOffset + effectiveHeight - ((last.close - minPrice) / range) * effectiveHeight;
+      const lastColor = last.close >= last.open ? upColor : downColor;
 
-    ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = lastColor;
-    ctx.beginPath();
-    ctx.moveTo(0, lastY);
-    ctx.lineTo(chartWidth, lastY);
-    ctx.stroke();
-    ctx.setLineDash([]);
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = lastColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, lastY);
+      ctx.lineTo(chartWidth, lastY);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-    ctx.fillStyle = lastColor;
-    ctx.fillRect(chartWidth + 2, lastY - 10, rightMargin - 4, 20);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 10px monospace";
-    ctx.textAlign = "left";
-    ctx.fillText(last.close.toFixed(2), chartWidth + 6, lastY + 3);
+      ctx.fillStyle = lastColor;
+      ctx.fillRect(chartWidth + 2, lastY - 9, 60, 18);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 10px monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(last.close.toFixed(2), chartWidth + 6, lastY + 3.5);
+    }
 
-    if (hoverData) {
+    if (hoverData && !isDraggingX.current && !isDraggingY.current && !isDraggingTime.current) {
       ctx.setLineDash([2, 2]);
-      ctx.strokeStyle = isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(hoverData.x, 0);
@@ -190,69 +225,180 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       ctx.stroke();
       ctx.setLineDash([]);
     }
-  }, [candles, hoverData]);
+  }, [candles, hoverData, visibleCount, candleOffset, priceScale]);
+
+  // --- Interactive Handlers ---
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const chartWidth = rect.width - 65;
+    const chartHeight = rect.height - 26;
+
+    if (mouseX > chartWidth) {
+      isDraggingY.current = true;
+      lastMouseY.current = e.clientY;
+      document.body.style.cursor = 'ns-resize';
+    } else if (mouseY > chartHeight) {
+      isDraggingTime.current = true;
+      lastMouseX.current = e.clientX;
+      document.body.style.cursor = 'ew-resize';
+    } else {
+      isDraggingX.current = true;
+      lastMouseX.current = e.clientX;
+      document.body.style.cursor = 'grabbing';
+    }
+  };
+
+  const handleMouseUp = () => {
+    isDraggingX.current = false;
+    isDraggingY.current = false;
+    isDraggingTime.current = false;
+    document.body.style.cursor = 'default';
+  };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
-    const chartWidth = rect.width - 60;
-    const chartHeight = rect.height - 24;
+    const chartWidth = rect.width - 65;
+    const chartHeight = rect.height - 26;
+    const yOffset = 15;
+    const effectiveHeight = chartHeight - (yOffset * 2);
+
+    if (isDraggingY.current) {
+      const deltaY = e.clientY - lastMouseY.current;
+      lastMouseY.current = e.clientY;
+      setPriceScale(prev => Math.max(0.01, prev + (deltaY * 0.01)));
+      setHoverData(null);
+      return;
+    }
+
+    if (isDraggingTime.current) {
+      const deltaX = e.clientX - lastMouseX.current;
+      lastMouseX.current = e.clientX;
+      setVisibleCount(prev => Math.max(10, Math.min(prev - (deltaX * 0.5), 300)));
+      setHoverData(null);
+      return;
+    }
+
+    if (isDraggingX.current) {
+      const deltaX = e.clientX - lastMouseX.current;
+      lastMouseX.current = e.clientX;
+      const slotWidth = chartWidth / visibleCount;
+      const shift = deltaX / slotWidth;
+      
+      setCandleOffset(prev => {
+        const next = prev + shift;
+        const maxOffset = Math.max(0, candles.length - visibleCount);
+        return Math.max(0, Math.min(next, maxOffset));
+      });
+      setHoverData(null);
+      return;
+    }
 
     if (mouseX < 0 || mouseX > chartWidth) {
       setHoverData(null);
       return;
     }
 
-    const maxVisibleCandles = 60;
-    const xSpace = chartWidth / maxVisibleCandles;
-    const distanceFromRightPx = chartWidth - 15 - mouseX;
-    const candlesFromRight = Math.round(distanceFromRightPx / xSpace);
-    const index = candles.length - 1 - candlesFromRight;
+    const slotWidth = chartWidth / visibleCount;
+    const fractionalOffset = candleOffset % 1;
+    const hoverIdx = Math.floor((mouseX / slotWidth) - fractionalOffset);
+    
+    const safeOffset = Math.max(0, Math.min(candleOffset, Math.max(0, candles.length - visibleCount)));
+    const endIndex = candles.length - Math.floor(safeOffset);
+    const startIndex = Math.max(0, endIndex - visibleCount);
+    const visibleCandles = candles.slice(startIndex, endIndex);
 
-    if (index >= 0 && index < candles.length) {
-      const item = candles[index];
-      const prices = candles.flatMap((c) => [c.high, c.low]);
-      const minPrice = Math.min(...prices) * 0.998;
-      const maxPrice = Math.max(...prices) * 1.002;
-      const range = maxPrice - minPrice || 1;
+    if (hoverIdx >= 0 && hoverIdx < visibleCandles.length) {
+      const item = visibleCandles[hoverIdx];
+      const prices = visibleCandles.flatMap((c) => [c.high, c.low]);
+      const rawMin = Math.min(...prices);
+      const rawMax = Math.max(...prices);
+      const pad = Math.max((rawMax - rawMin) * priceScale, 1.5);
+      
+      const minPrice = rawMin - pad;
+      const maxPrice = rawMax + pad;
+      const range = maxPrice - minPrice;
 
-      const snappedX = chartWidth - 15 - (candlesFromRight * xSpace);
-      const y = chartHeight - ((item.close - minPrice) / range) * chartHeight;
-      setHoverData({ time: item.time, price: item.close, x: snappedX, y });
+      const candleX = (hoverIdx * slotWidth) + (slotWidth / 2) + (fractionalOffset * slotWidth);
+      const candleY = yOffset + effectiveHeight - ((item.close - minPrice) / range) * effectiveHeight;
+
+      setHoverData({ time: item.time, price: item.close, x: candleX, y: candleY });
     } else {
       setHoverData(null);
     }
   };
 
-  const handleMouseLeave = () => setHoverData(null);
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    // If scrolling horizontally on a trackpad (deltaX), pan the chart
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const chartWidth = canvas.getBoundingClientRect().width - 65;
+      const slotWidth = chartWidth / visibleCount;
+      
+      // Calculate smooth shift based on trackpad movement
+      const shift = e.deltaX / slotWidth; 
+      
+      setCandleOffset(prev => {
+        const maxOffset = Math.max(0, candles.length - visibleCount);
+        return Math.max(0, Math.min(prev + shift, maxOffset));
+      });
+    } else {
+      // If scrolling vertically (mouse wheel / trackpad up-down), zoom in/out
+      const zoomSpeed = e.deltaY > 0 ? 4 : -4;
+      setVisibleCount(prev => Math.max(10, Math.min(prev + zoomSpeed, 300))); 
+    }
+  };
+
+  const handleReset = () => {
+    setCandleOffset(0);
+    setPriceScale(0.15);
+    setVisibleCount(40);
+  };
 
   return (
-    <div className="w-full h-full flex flex-col relative select-none">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-subtle)] text-xs font-mono">
-        <div className="flex items-center gap-4">
+    <div className="w-full h-full flex flex-col relative select-none bg-[var(--bg-root)]">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-subtle)] text-xs font-mono">
+        <div className="flex items-center gap-3">
           <span className="font-bold text-[var(--text-main)]">{ticker} Live Feed</span>
-          <span className="text-[var(--text-muted)] border px-1 border-[var(--border-subtle)] rounded">3M</span>
+          <span className="text-[10px] text-[var(--text-muted)] border px-1.5 py-0.5 border-[var(--border-subtle)] rounded">
+            {Math.round(visibleCount)} CANDLES
+          </span>
           {hoverData && (
-            <span className="text-[var(--text-main)]">
-              Hover: <strong className={hoverData.price >= basePrice ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
+            <span className="text-[var(--text-main)] text-xs">
+              Price: <strong className={hoverData.price >= basePrice ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
                 ₹{hoverData.price.toFixed(2)}
               </strong> ({hoverData.time})
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1.5 text-[10px] text-[var(--up-color)]">
-          <span className="w-1.5 h-1.5 rounded-full bg-[var(--up-color)] animate-pulse"></span>
-          <span>SYNCED</span>
+        <div className="flex items-center gap-1.5 text-[10px] text-[var(--up-color)] font-bold">
+          <button 
+            onClick={handleReset} 
+            className={`border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] px-2 py-0.5 rounded transition-opacity ${candleOffset > 1 || priceScale !== 0.15 || visibleCount !== 40 ? 'opacity-100 hover:bg-[var(--border-subtle)] cursor-pointer' : 'opacity-0 pointer-events-none'}`}
+          >
+            RESET CHART
+          </button>
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--up-color)] animate-pulse ml-2"></span>
+          <span>LIVE SYNC</span>
         </div>
       </div>
       <div className="relative flex-1 w-full min-h-[380px]">
         <canvas
           ref={canvasRef}
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
           onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
+          onWheel={handleWheel}
           className="w-full h-full block cursor-crosshair"
+          title="Drag X-Axis (bottom) to zoom time. Drag Y-Axis (right) to scale price. Drag chart to pan."
         />
       </div>
     </div>

@@ -3,6 +3,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useTheme } from "../hooks/useTheme";
 import { TrendingUp, TrendingDown, Trophy, Sun, Moon } from "lucide-react";
+import logoUrl from '../assets/logo.png';
 
 export default function TVLeaderboard() {
   const { isDark, toggleTheme } = useTheme();
@@ -45,7 +46,7 @@ export default function TVLeaderboard() {
       <header className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-6 mb-8">
         <div className="flex items-center gap-5">
           <div className="flex items-center gap-3 px-4 py-2">
-              <img src="/logo.png" alt="Bulls and Bears Logo" className="w-14 h-14" />
+              <img src={logoUrl} alt="Bulls and Bears Logo" className="w-14 h-14" />
             </div>
           <div>
             <h1 className="text-4xl font-black tracking-tight text-[var(--text-main)] uppercase">

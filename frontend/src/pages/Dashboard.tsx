@@ -48,6 +48,7 @@ export default function Dashboard() {
     const q = query(collection(db, "newsEvents"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
       const allNews = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setNewsEvents(allNews);
     });
     return () => unsub();
   }, []);

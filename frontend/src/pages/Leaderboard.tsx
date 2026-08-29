@@ -1,8 +1,8 @@
 import { useLeaderboard } from "../hooks/useLeaderboard";
-import { Clock, Trophy } from "lucide-react";
+import { Trophy } from "lucide-react";
 
 export default function Leaderboard() {
-  const { rankings, countdown, loading } = useLeaderboard();
+  const { rankings, loading } = useLeaderboard();
 
   if (loading) {
     return (

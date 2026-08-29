@@ -26,7 +26,7 @@ const CustomTooltip = ({ active, payload, label, safeStarting }: any) => {
 };
 
 export default function Dashboard() {
-  const { prices, marketStatus } = useLivePrices();
+  const { prices } = useLivePrices();
   const { cashBalance, startingBalance, longHoldings, shortHoldings } = useUserTradingData();
   const { watchlists } = useWatchlists();
   

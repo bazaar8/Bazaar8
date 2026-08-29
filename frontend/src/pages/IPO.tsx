@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { collection, onSnapshot, doc } from "firebase/firestore";
 import { httpsCallable } from "../config/api";
-import { db, app } from "../config/firebase";
+import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
 import { CheckCircle, TrendingUp, Clock, X } from "lucide-react";
 

@@ -144,7 +144,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-4 flex flex-col">
+       <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-4 flex flex-col">
           <div className="flex items-center justify-between mb-4 border-b border-[var(--border-subtle)] pb-4">
             <h3 className="text-sm font-bold text-[var(--text-main)] flex items-center gap-2 tracking-widest uppercase">
               {totalPL >= 0 ? <TrendingUp className="w-5 h-5 text-[var(--up-color)]" /> : <TrendingDown className="w-5 h-5 text-[var(--down-color)]" />}
@@ -154,7 +154,7 @@ export default function Dashboard() {
               ₹{totalPortfolioValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
-          <div className="flex-1 min-h-[280px] w-full pt-2">
+          <div className="w-full h-[250px] sm:h-[300px] pt-2">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={liveChartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                 <defs>

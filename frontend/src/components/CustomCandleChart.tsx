@@ -20,8 +20,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [hoverData, setHoverData] = useState<{ time: string; price: number; x: number; y: number } | null>(null);
-  
-  // Interactive TradingView State
+
   const [visibleCount, setVisibleCount] = useState(40); 
   const [candleOffset, setCandleOffset] = useState(0);  
   const [priceScale, setPriceScale] = useState(0.15);   
@@ -32,7 +31,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
   const lastMouseX = useRef(0);
   const lastMouseY = useRef(0);
 
-  // Fetch & Aggregate Realtime DB ticks
   useEffect(() => {
     const historyRef = query(ref(rtdb, `priceHistory/${ticker}`), limitToLast(1000));
     const unsub = onValue(historyRef, (snap) => {
@@ -88,7 +86,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     });
   }, [currentPrice]);
 
-  // Canvas Drawing
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
@@ -108,7 +105,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     const chartWidth = width - rightMargin;
     const chartHeight = height - bottomMargin;
 
-    // Drawing area safe zones to prevent wick clipping
     const yOffset = 15;
     const effectiveHeight = chartHeight - (yOffset * 2);
 
@@ -227,7 +223,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     }
   }, [candles, hoverData, visibleCount, candleOffset, priceScale]);
 
-  // --- Interactive Handlers ---
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -259,35 +254,63 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     document.body.style.cursor = 'default';
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (!canvasRef.current || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const rect = canvasRef.current.getBoundingClientRect();
+    const touchX = touch.clientX - rect.left;
+    const touchY = touch.clientY - rect.top;
+    const chartWidth = rect.width - 65;
+    const chartHeight = rect.height - 26;
+
+    if (touchX > chartWidth) {
+      isDraggingY.current = true;
+      lastMouseY.current = touch.clientY;
+    } else if (touchY > chartHeight) {
+      isDraggingTime.current = true;
+      lastMouseX.current = touch.clientX;
+    } else {
+      isDraggingX.current = true;
+      lastMouseX.current = touch.clientX;
+    }
+  };
+
+  const handleTouchEnd = () => {
+    isDraggingX.current = false;
+    isDraggingY.current = false;
+    isDraggingTime.current = false;
+    setHoverData(null); 
+  };
+
+  const processMove = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
+    const mouseX = clientX - rect.left;
     const chartWidth = rect.width - 65;
     const chartHeight = rect.height - 26;
     const yOffset = 15;
     const effectiveHeight = chartHeight - (yOffset * 2);
 
     if (isDraggingY.current) {
-      const deltaY = e.clientY - lastMouseY.current;
-      lastMouseY.current = e.clientY;
+      const deltaY = clientY - lastMouseY.current;
+      lastMouseY.current = clientY;
       setPriceScale(prev => Math.max(0.01, prev + (deltaY * 0.01)));
       setHoverData(null);
       return;
     }
 
     if (isDraggingTime.current) {
-      const deltaX = e.clientX - lastMouseX.current;
-      lastMouseX.current = e.clientX;
+      const deltaX = clientX - lastMouseX.current;
+      lastMouseX.current = clientX;
       setVisibleCount(prev => Math.max(10, Math.min(prev - (deltaX * 0.5), 300)));
       setHoverData(null);
       return;
     }
 
     if (isDraggingX.current) {
-      const deltaX = e.clientX - lastMouseX.current;
-      lastMouseX.current = e.clientX;
+      const deltaX = clientX - lastMouseX.current;
+      lastMouseX.current = clientX;
       const slotWidth = chartWidth / visibleCount;
       const shift = deltaX / slotWidth;
       
@@ -320,7 +343,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       const rawMin = Math.min(...prices);
       const rawMax = Math.max(...prices);
       const pad = Math.max((rawMax - rawMin) * priceScale, 1.5);
-      
       const minPrice = rawMin - pad;
       const maxPrice = rawMax + pad;
       const range = maxPrice - minPrice;
@@ -334,15 +356,19 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     }
   };
 
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => processMove(e.clientX, e.clientY);
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length === 1) {
+      processMove(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  };
+
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    // If scrolling horizontally on a trackpad (deltaX), pan the chart
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const chartWidth = canvas.getBoundingClientRect().width - 65;
       const slotWidth = chartWidth / visibleCount;
-      
-      // Calculate smooth shift based on trackpad movement
       const shift = e.deltaX / slotWidth; 
       
       setCandleOffset(prev => {
@@ -350,7 +376,6 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
         return Math.max(0, Math.min(prev + shift, maxOffset));
       });
     } else {
-      // If scrolling vertically (mouse wheel / trackpad up-down), zoom in/out
       const zoomSpeed = e.deltaY > 0 ? 4 : -4;
       setVisibleCount(prev => Math.max(10, Math.min(prev + zoomSpeed, 300))); 
     }
@@ -366,12 +391,12 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     <div className="w-full h-full flex flex-col relative select-none bg-[var(--bg-root)]">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-subtle)] text-xs font-mono">
         <div className="flex items-center gap-3">
-          <span className="font-bold text-[var(--text-main)]">{ticker} Live Feed</span>
-          <span className="text-[10px] text-[var(--text-muted)] border px-1.5 py-0.5 border-[var(--border-subtle)] rounded">
+          <span className="font-bold text-[var(--text-main)]">{ticker} Feed</span>
+          <span className="text-[10px] text-[var(--text-muted)] border px-1.5 py-0.5 border-[var(--border-subtle)] rounded hidden sm:inline-block">
             {Math.round(visibleCount)} CANDLES
           </span>
           {hoverData && (
-            <span className="text-[var(--text-main)] text-xs">
+            <span className="text-[var(--text-main)] text-xs hidden sm:inline-block">
               Price: <strong className={hoverData.price >= basePrice ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
                 ₹{hoverData.price.toFixed(2)}
               </strong> ({hoverData.time})
@@ -383,10 +408,10 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
             onClick={handleReset} 
             className={`border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] px-2 py-0.5 rounded transition-opacity ${candleOffset > 1 || priceScale !== 0.15 || visibleCount !== 40 ? 'opacity-100 hover:bg-[var(--border-subtle)] cursor-pointer' : 'opacity-0 pointer-events-none'}`}
           >
-            RESET CHART
+            RESET
           </button>
-          <span className="w-1.5 h-1.5 rounded-full bg-[var(--up-color)] animate-pulse ml-2"></span>
-          <span>LIVE SYNC</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--up-color)] animate-pulse ml-1 sm:ml-2"></span>
+          <span className="hidden sm:inline">LIVE SYNC</span>
         </div>
       </div>
       <div className="relative flex-1 w-full min-h-[380px]">
@@ -396,9 +421,13 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onMouseMove={handleMouseMove}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
           onWheel={handleWheel}
-          className="w-full h-full block cursor-crosshair"
-          title="Drag X-Axis (bottom) to zoom time. Drag Y-Axis (right) to scale price. Drag chart to pan."
+          style={{ touchAction: 'none' }}
+          className="w-full h-full block cursor-crosshair touch-none"
         />
       </div>
     </div>

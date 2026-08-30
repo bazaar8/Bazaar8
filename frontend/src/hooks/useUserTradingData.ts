@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, doc, onSnapshot, query, where, limit, orderBy } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where, limit } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
 import type { Holding, Order } from "../types/database";
@@ -26,7 +26,10 @@ export function useUserTradingData() {
         setCashBalance(data.cashBalance ?? data.cash ?? 0);
         setStartingBalance(data.startingBalance ?? data.startingCapital ?? 1000000);
       }
-    }, (err) => { console.warn("User Data Error:", err); setLoading(false); });
+    }, (err) => { 
+      console.warn("User Data Error:", err); 
+      setLoading(false); 
+    });
 
     const holdingsColRef = collection(db, "users", user.uid, "holdings");
     const unsubHoldings = onSnapshot(holdingsColRef, (snap) => {
@@ -42,15 +45,28 @@ export function useUserTradingData() {
     }, (err) => console.warn("Holdings Error:", err));
 
     const ordersColRef = collection(db, "orders");
-    const ordersQ = query(ordersColRef, where("uid", "==", user.uid), orderBy("timestamp", "desc"), limit(10));
+    const ordersQ = query(ordersColRef, where("uid", "==", user.uid), limit(10));
+    
     const unsubOrders = onSnapshot(ordersQ, (snap) => {
-      const ords: Order[] = [];
-      snap.forEach((d) => ords.push(d.data() as Order));
+
+      const ords = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any)
+      })) as Order[];
+      
+      ords.sort((a, b) => {
+        const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp || 0);
+        const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp || 0);
+        return timeB - timeA;
+      });
+
       setRecentOrders(ords);
-    }, (err) => console.warn("Orders Error:", err));
+    }, (err) => {
+      console.warn("Orders Error:", err);
+      setRecentOrders([]);
+    });
 
     setLoading(false);
-
     return () => {
       unsubUser();
       unsubHoldings();
@@ -58,5 +74,12 @@ export function useUserTradingData() {
     };
   }, [user]);
 
-  return { cashBalance, startingBalance, longHoldings, shortHoldings, recentOrders, loading };
+  return { 
+    cashBalance, 
+    startingBalance, 
+    longHoldings, 
+    shortHoldings, 
+    recentOrders: recentOrders || [], 
+    loading 
+  };
 }

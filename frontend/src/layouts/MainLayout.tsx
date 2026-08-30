@@ -8,7 +8,6 @@ import { collection, query, limit, onSnapshot, orderBy, doc } from 'firebase/fir
 import { db } from '../config/firebase';
 import logoUrl from '../assets/logo.png';
 
-
 export default function MainLayout() {
   const { user, profile, logoutUser } = useAuth();
   const navigate = useNavigate();
@@ -20,7 +19,7 @@ export default function MainLayout() {
   const [showNotification, setShowNotification] = useState(false);
   const [isFrozen, setIsFrozen] = useState(false);
   const [isAppReady, setIsAppReady] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // <-- NEW: Mobile Menu State
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleLogout = async () => {
@@ -45,7 +44,6 @@ export default function MainLayout() {
 
   useEffect(() => {
     if (!isAppReady || !profile || !marketStatus || marketStatus === 'LOADING') return;
-
     if (marketStatus === 'CLOSED' && profile.role !== 'admin') {
       if (location.pathname !== '/leaderboard') {
         navigate('/leaderboard');
@@ -62,12 +60,12 @@ export default function MainLayout() {
       if (!snap.empty) {
         const firedEvents = snap.docs
           .map(doc => doc.data())
-          .filter(news => news.startTime && news.startTime > 0)
-          .sort((a, b) => b.startTime - a.startTime);
+          .filter(news => news && typeof news.startTime === 'number' && news.startTime > 0)
+          .sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
           
         if (firedEvents.length > 0) {
           const newestNews = firedEvents[0];
-          const timeSinceFired = Date.now() - newestNews.startTime;
+          const timeSinceFired = Date.now() - (newestNews.startTime || Date.now());
           const isRecent = timeSinceFired < 30000;
 
           if (isRecent) {
@@ -111,14 +109,15 @@ export default function MainLayout() {
   return (
     <div className="min-h-screen flex flex-col bg-[var(--bg-root)] transition-colors duration-200">
       <header className="bg-[var(--bg-card)] border-b border-[var(--border-subtle)] sticky top-0 z-50 transition-colors duration-200">
-        <div className="max-w-[1600px] mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-2 sm:px-4 h-16 flex items-center justify-between">
           
-          <div className="flex items-center gap-8 h-full">
-            <div className="flex items-center gap-3 px-4 py-2">
-              <img src={logoUrl} alt="Bulls and Bears Logo" className="w-10 h-10" />
-              <span className="font-bold text-lg tracking-tight text-[var(--text-main)]">Bulls and Bears</span>  
-              <span className="font-bold text-lg tracking-tight text-[var(--text-main)]">Bazaar 8.0</span>
+          <div className="flex items-center gap-2 sm:gap-8 h-full">
+            <div className="flex items-center gap-2 sm:gap-3 py-2">
+              <img src={logoUrl} alt="Bulls and Bears Logo" className="w-8 h-8 sm:w-10 sm:h-10 object-contain" />
+              <span className="hidden sm:inline font-bold text-lg tracking-tight text-[var(--text-main)]">Bulls and Bears</span>  
+              <span className="font-bold text-base sm:text-lg tracking-tight text-[var(--text-main)]">Bazaar 8.0</span>
             </div>
+
             <nav className="hidden lg:flex items-center gap-6 h-full">
               {visibleNavLinks.map(link => {
                 const isActive = location.pathname === link.path || (link.path !== '/' && location.pathname.startsWith(link.path));
@@ -152,16 +151,14 @@ export default function MainLayout() {
                 {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
               
-              <button className="hidden sm:block p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)] relative">
-               <Link 
-                  to="/news" 
-                  className="hidden sm:block p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)] relative"
-                  title="News"
-                >
-                  <Bell className="w-5 h-5" />
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-[var(--down-color)] rounded-full border border-[var(--bg-card)]"></span>
-                </Link>
-              </button>
+              <Link 
+                to="/news" 
+                className="hidden sm:block p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)] relative"
+                title="News"
+              >
+                <Bell className="w-5 h-5" />
+                <span className="absolute top-1 right-1 w-2 h-2 bg-[var(--down-color)] rounded-full border border-[var(--bg-card)]"></span>
+              </Link>
               
               {user && (
                 <div className="flex items-center gap-3 border-l border-[var(--border-subtle)] pl-3 sm:pl-4 ml-1">

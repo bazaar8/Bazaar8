@@ -23,7 +23,6 @@ export default function TVLeaderboard() {
     }
   };
 
-  // Automatically sync every 5 seconds (5000ms) without showing a countdown
   useEffect(() => {
     fetchLeaderboard();
     const timer = setInterval(() => {
@@ -42,7 +41,6 @@ export default function TVLeaderboard() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-root)] text-[var(--text-main)] flex flex-col p-8 font-sans transition-colors duration-200">
-      {/* Top TV Bar */}
       <header className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-6 mb-8">
         <div className="flex items-center gap-5">
           <div className="flex items-center gap-3 px-4 py-2">
@@ -66,7 +64,6 @@ export default function TVLeaderboard() {
             {isDark ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}
           </button>
 
-          {/* Replaced Countdown with a Live Sync Badge */}
           <div className="flex items-center gap-3 bg-[var(--bg-card)] border border-[var(--border-subtle)] px-6 py-4 rounded-2xl shadow-sm">
             <span className="w-2.5 h-2.5 rounded-full bg-[var(--up-color)] animate-pulse"></span>
             <span className="text-sm font-bold tracking-widest text-[var(--up-color)] uppercase">LIVE SYNC</span>
@@ -85,10 +82,8 @@ export default function TVLeaderboard() {
         </div>
       ) : (
         <div className="flex-1 flex flex-col gap-10">
-          {/* Big Screen Podium Section */}
           {topThree.length > 0 && (
             <div className="flex items-end justify-center gap-8 pt-8 pb-4">
-              {/* 2nd Place */}
               {topThree[1] && (
                 <div className="flex flex-col items-center w-72">
                   <div className="flex flex-col items-center mb-4 text-center px-2">
@@ -109,7 +104,6 @@ export default function TVLeaderboard() {
                 </div>
               )}
 
-              {/* 1st Place */}
               {topThree[0] && (
                 <div className="flex flex-col items-center w-84 z-10">
                   <div className="flex flex-col items-center mb-4 text-center px-2">
@@ -131,7 +125,6 @@ export default function TVLeaderboard() {
                 </div>
               )}
 
-              {/* 3rd Place */}
               {topThree[2] && (
                 <div className="flex flex-col items-center w-72">
                   <div className="flex flex-col items-center mb-4 text-center px-2">
@@ -154,7 +147,6 @@ export default function TVLeaderboard() {
             </div>
           )}
 
-          {/* Ranks 4+ Table Section */}
           <div className="flex-1 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)] overflow-hidden shadow-sm">
             <table className="w-full text-left font-mono">
               <thead>

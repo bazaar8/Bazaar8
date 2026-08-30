@@ -11,7 +11,6 @@ export default function Portfolio() {
   const { profile } = useAuth();
   const { cashBalance, startingBalance, longHoldings, shortHoldings, recentOrders, loading } = useUserTradingData();
   const { prices, marketStatus } = useLivePrices();
-  
   const [blockedIpoFunds, setBlockedIpoFunds] = useState(0);
   const ipoUnsubs = useRef<(() => void)[]>([]);
 
@@ -22,10 +21,9 @@ export default function Portfolio() {
     const unsub = onSnapshot(q, (snap) => {
        ipoUnsubs.current.forEach(fn => fn());
        ipoUnsubs.current = [];
-
        const activeIpos = snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((i: any) => ['upcoming', 'open', 'closed'].includes(i.status));
        const currentBlocked: Record<string, number> = {};
-
+       
        activeIpos.forEach((ipo: any) => {
           const subRef = doc(db, "ipos", ipo.id, "subscriptions", profile.uid);
           const subUnsub = onSnapshot(subRef, (subSnap) => {
@@ -47,7 +45,6 @@ export default function Portfolio() {
           ipoUnsubs.current.push(subUnsub);
        });
     });
-
     return () => {
       unsub();
       ipoUnsubs.current.forEach(fn => fn());
@@ -64,32 +61,32 @@ export default function Portfolio() {
 
   const safeCash = isNaN(Number(cashBalance)) ? 0 : Number(cashBalance);
   const safeStarting = isNaN(Number(startingBalance)) || Number(startingBalance) === 0 ? 1000000 : Number(startingBalance);
-
+  
   const longMarketValue = longHoldings.reduce((sum, h) => {
     const p = Number(prices[h.ticker]?.price ?? h.avgPrice) || 0;
     const q = Number(h.quantity) || 0;
     return sum + (q * p);
   }, 0);
-
+  
   const shortLiability = shortHoldings.reduce((sum, h) => {
     const p = Number(prices[h.ticker]?.price ?? h.avgPrice) || 0;
     const q = Number(h.quantity) || 0;
     return sum + (q * p);
   }, 0);
-
+  
   const totalPortfolioValue = safeCash + longMarketValue - shortLiability + blockedIpoFunds;
   const totalPL = totalPortfolioValue - safeStarting;
   const returnPct = (totalPL / safeStarting) * 100;
-
+  
   const chartTotal = Math.max(1, safeCash + longMarketValue + shortLiability + blockedIpoFunds);
   const eqPct = (longMarketValue / chartTotal) * 100;
   const cashPct = ((safeCash + blockedIpoFunds) / chartTotal) * 100;
   const shortPct = (shortLiability / chartTotal) * 100;
-
+  
   const eqDash = `${eqPct} ${100 - eqPct}`;
   const cashDash = `${cashPct} ${100 - cashPct}`;
   const shortDash = `${shortPct} ${100 - shortPct}`;
-
+  
   const eqOffset = 0;
   const cashOffset = 100 - eqPct;
   const shortOffset = 100 - (eqPct + cashPct);
@@ -100,7 +97,6 @@ export default function Portfolio() {
       alert("Please allow popups to export PDF.");
       return;
     }
-
     const htmlContent = `
       <html>
         <head>
@@ -158,7 +154,6 @@ export default function Portfolio() {
         </body>
       </html>
     `;
-
     printWindow.document.write(htmlContent);
     printWindow.document.close();
     printWindow.focus();
@@ -177,7 +172,6 @@ export default function Portfolio() {
         </div>
         <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase bg-[var(--bg-card)] px-2 py-1 border border-[var(--border-subtle)] rounded">MARKET: {marketStatus}</div>
       </div>
-
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
         <div className="terminal-card p-4">
           <div className="flex justify-between items-center text-[var(--text-muted)] text-[10px] uppercase font-bold mb-1">
@@ -197,7 +191,7 @@ export default function Portfolio() {
             ₹{safeCash.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           {blockedIpoFunds > 0 ? (
-            <div className="text-[10px] font-mono text-[#3b82f6] mt-1 font-bold">+ ₹{blockedIpoFunds.toLocaleString()} Blocked in IPO</div>
+            <div className="text-[10px] font-mono text-[#3b82f6] mt-1 font-bold">+₹{blockedIpoFunds.toLocaleString()} Blocked in IPO</div>
           ) : (
             <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">Unallocated Margin</div>
           )}
@@ -222,12 +216,9 @@ export default function Portfolio() {
           <div className="text-[10px] font-mono text-[var(--text-muted)] mt-1">ROI Benchmark</div>
         </div>
       </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        
         <div className="terminal-card p-4 flex flex-col items-center justify-center relative">
           <h2 className="text-xs font-bold text-[var(--text-main)] uppercase tracking-widest absolute top-4 left-4">Allocation</h2>
-          
           <div className="relative w-40 h-40 mt-8 mb-4">
             <svg viewBox="0 0 32 32" className="w-full h-full -rotate-90 transform rounded-full">
               <circle cx="16" cy="16" r="15.9155" fill="none" stroke="var(--bg-root)" strokeWidth="4" />
@@ -240,7 +231,6 @@ export default function Portfolio() {
               <span className="text-sm font-bold text-[var(--text-main)] font-mono">100%</span>
             </div>
           </div>
-
           <div className="w-full space-y-2 mt-2">
             <div className="flex items-center justify-between text-xs font-mono">
               <div className="flex items-center gap-2">
@@ -265,14 +255,13 @@ export default function Portfolio() {
             </div>
           </div>
         </div>
-
         <div className="lg:col-span-2 terminal-card flex flex-col overflow-hidden">
           <div className="p-4 border-b border-[var(--border-subtle)] flex justify-between items-center bg-[var(--bg-root)]">
             <div className="flex items-center gap-2">
               <ListOrdered className="w-4 h-4 text-[var(--text-main)]" />
               <span className="text-xs font-bold text-[var(--text-main)] uppercase tracking-widest">Recent Executions</span>
             </div>
-            <button 
+            <button
               onClick={handleExportPDF}
               className="px-3 py-1.5 bg-[#3b82f6] hover:opacity-90 text-white text-[10px] font-bold uppercase rounded shadow-sm transition-opacity"
             >
@@ -282,9 +271,8 @@ export default function Portfolio() {
               All Orders <ArrowRight className="w-3 h-3" />
             </Link>
           </div>
-          
           <div className="flex-1 overflow-x-auto">
-            {recentOrders.length === 0 ? (
+            {(recentOrders?.length ?? 0) === 0 ? (
               <div className="text-xs font-mono text-[var(--text-muted)] text-center py-16">No order records found</div>
             ) : (
               <table className="w-full text-left text-xs font-mono">
@@ -321,7 +309,6 @@ export default function Portfolio() {
           </div>
         </div>
       </div>
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6 mt-2">
         <div className="terminal-card overflow-hidden">
           <div className="p-4 border-b border-[var(--border-subtle)] bg-[var(--bg-root)]">
@@ -362,7 +349,6 @@ export default function Portfolio() {
             )}
           </div>
         </div>
-
         <div className="terminal-card overflow-hidden">
           <div className="p-4 border-b border-[var(--border-subtle)] bg-[var(--bg-root)]">
             <span className="text-xs font-bold text-[var(--down-color)] uppercase tracking-widest">Short Positions (Liab)</span>

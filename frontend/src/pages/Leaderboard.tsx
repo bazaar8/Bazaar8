@@ -12,19 +12,16 @@ export default function Leaderboard() {
     );
   }
 
-  // Cast to any[] to bypass TypeScript errors for missing type definitions
   const typedRankings = rankings as any[];
   const topThree = typedRankings.slice(0, 3);
   const rest = typedRankings.slice(3);
 
-  // Helper function to extract the best available name from Firebase data
   const getTraderName = (user: any) => {
     return user?.displayName || user?.name || user?.email?.split('@')[0] || user?.id || "Unknown Trader";
   };
 
   return (
     <div className="flex flex-col gap-6 pb-12">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-3">
         <div>
           <h1 className="text-lg font-bold text-[var(--text-main)] tracking-tight">Institutional Leaderboard</h1>
@@ -32,10 +29,8 @@ export default function Leaderboard() {
         </div>
       </div>
 
-      {/* Podium Section for Top 3 */}
       {topThree.length > 0 && (
         <div className="flex items-end justify-center gap-3 sm:gap-6 pt-10 pb-6">
-          {/* 2nd Place */}
           {topThree[1] && (
             <div className="flex flex-col items-center w-28 sm:w-36">
               <div className="flex flex-col items-center mb-3 text-center px-1">
@@ -55,7 +50,6 @@ export default function Leaderboard() {
             </div>
           )}
 
-          {/* 1st Place */}
           {topThree[0] && (
             <div className="flex flex-col items-center w-32 sm:w-40 z-10">
               <div className="flex flex-col items-center mb-3 text-center px-1">
@@ -76,7 +70,6 @@ export default function Leaderboard() {
             </div>
           )}
 
-          {/* 3rd Place */}
           {topThree[2] && (
             <div className="flex flex-col items-center w-28 sm:w-36">
               <div className="flex flex-col items-center mb-3 text-center px-1">
@@ -98,7 +91,6 @@ export default function Leaderboard() {
         </div>
       )}
 
-      {/* Ranks 4+ Table List */}
       <div className="terminal-card overflow-hidden">
         <table className="w-full text-left text-xs font-mono whitespace-nowrap">
           <thead>

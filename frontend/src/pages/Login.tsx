@@ -49,8 +49,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-root)] text-[var(--text-main)] flex transition-colors duration-200 relative overflow-hidden">
-      
-      {/* Theme Toggle Button */}
+
       <button 
         onClick={toggleTheme} 
         className="absolute top-6 right-6 z-50 p-3 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-full text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors shadow-lg"
@@ -58,13 +57,11 @@ export default function Login() {
         {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
       </button>
 
-      {/* Dynamic Ambient Background Glows */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
         <div className="absolute -top-[10%] left-[10%] w-[600px] h-[600px] bg-[var(--up-color)]/20 rounded-full blur-[140px]" />
         <div className="absolute bottom-[5%] right-[15%] w-[550px] h-[550px] bg-[var(--down-color)]/15 rounded-full blur-[140px]" />
       </div>
 
-      {/* Left Branding Panel */}
       <div className="hidden lg:flex w-1/2 bg-[var(--bg-card)]/70 backdrop-blur-2xl border-r border-[var(--border-subtle)] p-12 flex-col justify-between relative z-10">
         <div>
           <div className="flex items-center gap-3">
@@ -104,7 +101,6 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Right Form Panel */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-12 relative z-10">
         <div className="max-w-md w-full">
           <div className="text-center lg:text-left mb-8">

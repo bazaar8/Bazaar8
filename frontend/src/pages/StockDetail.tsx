@@ -9,7 +9,7 @@ import { ArrowLeft, TrendingUp, TrendingDown, CheckCircle2, AlertCircle, Zap } f
 import AddToWishlistButton from "../components/AddToWishlistButton";
 export default function StockDetail() {
   const { ticker } = useParams<{ ticker: string }>();
-  const { prices, marketStatus } = useLivePrices();
+  const { prices } = useLivePrices();
   const { cashBalance, longHoldings } = useUserTradingData();
   
   const [side, setSide] = useState<"BUY" | "SELL" | "SHORT" | "COVER">("BUY");

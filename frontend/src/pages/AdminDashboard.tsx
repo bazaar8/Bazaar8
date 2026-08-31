@@ -7,9 +7,9 @@ import { app, auth } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme"; 
 import { 
-  LayoutDashboard, Activity, Users, Newspaper, 
+  LayoutDashboard, Users, Newspaper, 
   Sparkles, Power, Pause, Play, ShieldAlert, LogOut,
-  Plus, Send, CheckCircle, Upload, X, Clock, TrendingUp, Mail, BarChart2, Sun, Moon
+  Plus, Send, CheckCircle, Upload, X, Clock, TrendingUp, Mail, BarChart2, Sun, Moon, Sliders, Coins
 } from "lucide-react";
 import { importNewsEvents, releaseEventNow, cancelEvent } from "../services/newsAdminService";
 
@@ -49,6 +49,7 @@ export default function AdminDashboard() {
   const [prices, setPrices] = useState<Record<string, any>>({});
   
   const [adminLogs, setAdminLogs] = useState<any[]>([]);
+  const [taxTreasury, setTaxTreasury] = useState<{ totalTaxCollected?: number; lastTradeTax?: number }>({ totalTaxCollected: 0 });
   
   const rtdb = getDatabase(app);
   const db = getFirestore(app);
@@ -82,6 +83,10 @@ export default function AdminDashboard() {
       setAdminLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const unsubTreasury = onSnapshot(doc(db, "system", "treasury"), (snap) => {
+      if (snap.exists()) setTaxTreasury(snap.data() as any);
+    });
+
     return () => {
       unsubMkt();
       unsubPrices();
@@ -90,6 +95,7 @@ export default function AdminDashboard() {
       unsubIpos();
       unsubNews();
       unsubAdminLogs();
+      unsubTreasury();
     };
   }, [profile]);
 
@@ -305,6 +311,16 @@ export default function AdminDashboard() {
         closeTime: ipoCloseTime ? new Date(ipoCloseTime).getTime() : Date.now() + 3600000,
         listTime: ipoListTime ? new Date(ipoListTime).getTime() : Date.now() + 7200000
       });
+      await addDoc(collection(db, "newsEvents"), {
+        headline: `🔔 New IPO Announced: ${ipoTicker.toUpperCase()} (${ipoName}) - Bidding open at ₹${ipoPrice}!`,
+        status: "active",
+        startTime: Date.now(),
+        createdAt: Date.now(),
+        durationMinutes: 60,
+        targetTickers: [ipoTicker.toUpperCase()],
+        impactDirection: "positive"
+      });
+
       setIpoName(""); setIpoTicker(""); setIpoPrice(""); setIpoLotSize(""); setIpoTotalLots(""); setIpoPremium(""); setIpoOpenTime(""); setIpoCloseTime(""); setIpoListTime("");
       alert("IPO Scheduled & Initialized!");
     } catch (err: any) { alert("Error creating IPO: " + err.message); } finally { setProcessingAction(null); }
@@ -314,15 +330,46 @@ export default function AdminDashboard() {
     setProcessingAction(`${ipoId}-${action}`);
     logAdminAction(action === 'allot' ? "RUN_IPO_ALLOTMENT" : action === 'list' ? "LIST_IPO" : "CLOSE_IPO", { ipoSymbol: ipoId });
     try {
-      if (action === 'close') await updateDoc(doc(db, "ipos", ipoId), { status: "closed" });
-      else if (action === 'allot') await updateDoc(doc(db, "ipos", ipoId), { triggerAllotment: true });
-      else await updateDoc(doc(db, "ipos", ipoId), { triggerListing: true });
+      if (action === 'close') {
+        await updateDoc(doc(db, "ipos", ipoId), { status: "closed" });
+        await addDoc(collection(db, "newsEvents"), {
+          headline: `⏳ IPO Bidding Closed: Applications for ${ipoId} are now closed. Allotment in progress!`,
+          status: "active",
+          startTime: Date.now(),
+          createdAt: Date.now(),
+          durationMinutes: 60,
+          targetTickers: [ipoId],
+          impactDirection: "neutral"
+        });
+      } else if (action === 'allot') {
+        await updateDoc(doc(db, "ipos", ipoId), { triggerAllotment: true });
+        await addDoc(collection(db, "newsEvents"), {
+          headline: `🎉 IPO Allotment Out: Allotment for ${ipoId} is finalized! Successful bids credited to portfolios.`,
+          status: "active",
+          startTime: Date.now(),
+          createdAt: Date.now(),
+          durationMinutes: 60,
+          targetTickers: [ipoId],
+          impactDirection: "positive"
+        });
+      } else {
+        await updateDoc(doc(db, "ipos", ipoId), { triggerListing: true });
+        await addDoc(collection(db, "newsEvents"), {
+          headline: `🚀 IPO Listed: ${ipoId} is now officially LISTED and live for trading on the exchange!`,
+          status: "active",
+          startTime: Date.now(),
+          createdAt: Date.now(),
+          durationMinutes: 60,
+          targetTickers: [ipoId],
+          impactDirection: "positive"
+        });
+      }
     } catch (err: any) { alert(`Error during ${action}: ` + err.message); } finally { setProcessingAction(null); }
   };
 
   const navItems = [
     { id: 'dashboard', label: 'SYSTEM', icon: LayoutDashboard },
-    { id: 'market', label: 'MARKET', icon: Activity },
+    { id: 'market', label: 'MARKET', icon: Sliders },
     { id: 'participants', label: 'TRADERS', icon: Users },
     { id: 'stocks', label: 'STOCKS', icon: BarChart2 },
     { id: 'logs', label: 'ACTIVITY LOGS', icon: ShieldAlert },
@@ -386,7 +433,7 @@ export default function AdminDashboard() {
               <div className="border-b border-[var(--border-subtle)] pb-3">
                 <h1 className="text-sm font-bold uppercase tracking-widest text-[var(--text-main)]">System Overview</h1>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <div className="terminal-card p-4">
                   <div className="text-[var(--text-muted)] text-[10px] font-bold uppercase mb-1">Engine Status</div>
                   <div className={`text-xl font-bold font-mono ${marketState === 'OPEN' ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
@@ -404,6 +451,16 @@ export default function AdminDashboard() {
                 <div className="terminal-card p-4">
                   <div className="text-[var(--text-muted)] text-[10px] font-bold uppercase mb-1">Active Tickers</div>
                   <div className="text-xl font-bold font-mono text-[var(--text-main)]">{Object.keys(prices).length}</div>
+                </div>
+                <div className="terminal-card p-4 border border-amber-500/40 bg-amber-500/5">
+                  <div className="text-amber-400 text-[10px] font-bold uppercase mb-1 flex items-center justify-between">
+                    <span>Tax Treasury</span>
+                    <Coins className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="text-xl font-bold font-mono text-amber-400">
+                    ₹{(taxTreasury.totalTaxCollected || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[9px] font-mono text-[var(--text-muted)] mt-1">0.1% STT Accumulated</div>
                 </div>
               </div>
 
@@ -989,7 +1046,7 @@ export default function AdminDashboard() {
                                 disabled={ipo.status !== 'allotted' || processingAction === `${ipo.id}-list`}
                                 className="px-2 py-1 flex items-center gap-1 bg-[#08998115] hover:opacity-80 border border-[#08998150] disabled:opacity-50 text-[var(--up-color)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
                               >
-                                 {processingAction === `${ipo.id}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Activity className="w-3 h-3" /> List</>}
+                                 {processingAction === `${ipo.id}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Sparkles className="w-3 h-3" /> List</>}
                               </button>
                             </td>
                           </tr>

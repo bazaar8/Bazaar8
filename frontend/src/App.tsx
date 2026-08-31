@@ -9,11 +9,9 @@ import StockDetail from './pages/StockDetail';
 import Portfolio from './pages/Portfolio';
 import Orders from './pages/Orders';
 import Leaderboard from './pages/Leaderboard';
-import News from './pages/News';
 import IPO from './pages/IPO';
 import AdminDashboard from './pages/AdminDashboard';
 import Login from './pages/Login';
-import Watchlists from './pages/Watchlists';
 import Register from './pages/Register';
 import TVLeaderboard from './pages/TVLeaderboard';
 
@@ -34,9 +32,9 @@ export default function App() {
               <Route path="portfolio" element={<Portfolio />} />
               <Route path="orders" element={<Orders />} />
               <Route path="leaderboard" element={<Leaderboard />} />
-              <Route path="news" element={<News />} />
               <Route path="ipo" element={<IPO />} />
-              <Route path="watchlists" element={<Watchlists />} />
+              <Route path="watchlists" element={<Navigate to="/" replace />} />
+              <Route path="news" element={<Navigate to="/" replace />} />
             </Route>
           </Route>
 

@@ -2,7 +2,16 @@ import { useState, useEffect } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useTheme } from "../hooks/useTheme";
-import { TrendingUp, TrendingDown, Trophy, Sun, Moon } from "lucide-react";
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  Sun, 
+  Moon, 
+  Crown, 
+  Shield, 
+  Flame, 
+  Trophy
+} from "lucide-react";
 import logoUrl from '../assets/logo.png';
 
 export default function TVLeaderboard() {
@@ -23,176 +32,245 @@ export default function TVLeaderboard() {
     }
   };
 
+  // Background 8-second refresh loop
   useEffect(() => {
     fetchLeaderboard();
-    const timer = setInterval(() => {
+    const fetchTimer = setInterval(() => {
       fetchLeaderboard();
-    }, 5000);
+    }, 8000);
 
-    return () => clearInterval(timer);
+    return () => clearInterval(fetchTimer);
   }, []);
 
   const getTraderName = (user: any) => {
-    return user?.displayName || user?.name || user?.email?.split('@')[0] || user?.uid || "Unknown Trader";
+    return user?.displayName || user?.name || user?.email?.split('@')[0] || user?.uid || "Trader";
+  };
+
+  const getInitials = (name: string) => {
+    return name.slice(0, 2).toUpperCase();
   };
 
   const topThree = rankings.slice(0, 3);
   const rest = rankings.slice(3);
 
   return (
-    <div className="min-h-screen bg-[var(--bg-root)] text-[var(--text-main)] flex flex-col p-8 font-sans transition-colors duration-200">
-      <header className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-6 mb-8">
-        <div className="flex items-center gap-5">
-          <div className="flex items-center gap-3 px-4 py-2">
-              <img src={logoUrl} alt="Bulls and Bears Logo" className="w-14 h-14" />
-            </div>
+    <div className="min-h-screen bg-[var(--bg-root)] text-[var(--text-main)] flex flex-col p-6 sm:p-8 font-sans transition-colors duration-200">
+      
+      {/* 1. BROADCAST HEADER (Clean 'Bazaar 8.0', No 'Live Rankings', No Timer) */}
+      <header className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-5 mb-6">
+        <div className="flex items-center gap-3">
+          <img src={logoUrl} alt="Bazaar 8.0 Logo" className="w-10 h-10 object-contain" />
           <div>
-            <h1 className="text-4xl font-black tracking-tight text-[var(--text-main)] uppercase">
-              Bulls and Bears Live Rankings
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-[var(--text-main)]">
+              Bazaar 8.0
             </h1>
-            <p className="text-[var(--text-muted)] font-mono mt-1 uppercase tracking-widest text-sm font-semibold">
-              Institutional Leaderboard • Live Broadcast View
+            <p className="text-[var(--text-muted)] font-mono text-xs uppercase tracking-wider">
+              Tournament Standings
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={toggleTheme} 
-            className="p-3.5 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors shadow-sm"
-          >
-            {isDark ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}
-          </button>
-
-          <div className="flex items-center gap-3 bg-[var(--bg-card)] border border-[var(--border-subtle)] px-6 py-4 rounded-2xl shadow-sm">
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--up-color)] animate-pulse"></span>
-            <span className="text-sm font-bold tracking-widest text-[var(--up-color)] uppercase">LIVE SYNC</span>
-          </div>
-        </div>
+        <button 
+          onClick={toggleTheme} 
+          className="p-2.5 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors shadow-sm"
+        >
+          {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
       </header>
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
-          <div className="w-16 h-16 border-4 border-[var(--up-color)] border-t-transparent rounded-full animate-spin"></div>
+          <div className="w-10 h-10 border-3 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
         </div>
       ) : rankings.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-muted)] space-y-4">
-          <Trophy className="w-24 h-24 opacity-20" />
-          <span className="text-2xl font-mono uppercase tracking-widest">Awaiting Market Sync...</span>
+        <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-muted)] space-y-3">
+          <Trophy className="w-16 h-16 opacity-20" />
+          <span className="text-base font-mono uppercase tracking-wider">Awaiting Standings...</span>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col gap-10">
+        <div className="flex-1 flex flex-col gap-6 max-w-6xl mx-auto w-full">
+          
+          {/* 2. TOP 3 PODIUM */}
           {topThree.length > 0 && (
-            <div className="flex items-end justify-center gap-8 pt-8 pb-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-end pt-2 pb-2">
+              
+              {/* #2 SILVER (Left) */}
               {topThree[1] && (
-                <div className="flex flex-col items-center w-72">
-                  <div className="flex flex-col items-center mb-4 text-center px-2">
-                    <span className="text-xl font-black text-[var(--text-main)] truncate max-w-[260px]">
+                <div className="relative group">
+                  <div className="bg-[var(--bg-card)] border border-slate-400/40 rounded-2xl p-5 flex flex-col items-center text-center shadow-md">
+                    
+                    <div className="relative mb-3">
+                      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-slate-200 to-slate-600 p-[2px] shadow">
+                        <div className="w-full h-full bg-[#0d1117] rounded-2xl flex items-center justify-center font-bold text-base text-slate-200">
+                          {getInitials(getTraderName(topThree[1]))}
+                        </div>
+                      </div>
+                      <span className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-lg bg-slate-300 text-black font-black text-xs flex items-center justify-center shadow">
+                        2
+                      </span>
+                    </div>
+
+                    <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1">
+                      <Shield className="w-3 h-3 text-slate-300" />
+                      <span>Rank 2</span>
+                    </div>
+
+                    <h3 className="text-base font-bold text-[var(--text-main)] truncate max-w-[200px]">
                       {getTraderName(topThree[1])}
-                    </span>
-                    <span className="text-lg font-mono font-bold text-[var(--text-muted)] mt-1">
+                    </h3>
+
+                    <div className="text-lg font-mono font-bold text-[var(--text-main)] mt-1">
                       ₹{topThree[1].portfolioValue?.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <span className={`text-base font-mono font-black mt-1 flex items-center gap-1 ${topThree[1].returnPct >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
-                      {topThree[1].returnPct >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                      {topThree[1].returnPct >= 0 ? "+" : ""}{topThree[1].returnPct?.toFixed(2)}%
-                    </span>
-                  </div>
-                  <div className="w-full h-44 bg-[var(--bg-card)] border-2 border-[var(--border-subtle)] border-b-0 rounded-t-2xl flex flex-col items-center justify-start pt-5 shadow-xl">
-                    <span className="text-4xl font-black text-[var(--text-muted)]">2</span>
+                    </div>
+
+                    <div className={`text-xs font-mono font-bold flex items-center gap-1 mt-2 px-3 py-0.5 rounded-full ${
+                      (topThree[1].returnPct ?? topThree[1].pnl) >= 0 ? "bg-[var(--up-color)]/20 text-[var(--up-color)]" : "bg-[var(--down-color)]/20 text-[var(--down-color)]"
+                    }`}>
+                      {(topThree[1].returnPct ?? topThree[1].pnl) >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span>{(topThree[1].returnPct ?? topThree[1].pnl) >= 0 ? "+" : ""}{Number(topThree[1].returnPct ?? topThree[1].pnl)?.toFixed(2)}%</span>
+                    </div>
+
                   </div>
                 </div>
               )}
 
+              {/* #1 GOLD (Center) */}
               {topThree[0] && (
-                <div className="flex flex-col items-center w-84 z-10">
-                  <div className="flex flex-col items-center mb-4 text-center px-2">
-                    <Trophy className="w-10 h-10 text-amber-400 mb-2 animate-bounce" />
-                    <span className="text-2xl font-black text-[var(--text-main)] truncate max-w-[300px]">
+                <div className="relative group md:-translate-y-3">
+                  <div className="bg-gradient-to-b from-[var(--bg-card)] via-[var(--bg-card)] to-[#141005] border-2 border-amber-400 rounded-2xl p-6 flex flex-col items-center text-center shadow-[0_0_35px_rgba(251,191,36,0.2)]">
+                    
+                    <div className="relative mb-3">
+                      <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-300 to-amber-500 p-[3px] shadow-[0_0_20px_rgba(251,191,36,0.5)]">
+                        <div className="w-full h-full bg-[#120d04] rounded-2xl flex items-center justify-center font-black text-xl text-amber-300">
+                          {getInitials(getTraderName(topThree[0]))}
+                        </div>
+                      </div>
+                      <span className="absolute -bottom-2 -right-2 w-7 h-7 rounded-lg bg-gradient-to-br from-amber-300 to-amber-500 text-black font-black text-xs flex items-center justify-center shadow">
+                        1
+                      </span>
+                    </div>
+
+                    <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-400 mb-1 flex items-center gap-1">
+                      <Crown className="w-3.5 h-3.5 fill-current text-amber-400" />
+                      <span>Champion • Rank 1</span>
+                    </div>
+
+                    <h2 className="text-lg font-black text-[var(--text-main)] truncate max-w-[220px]">
                       {getTraderName(topThree[0])}
-                    </span>
-                    <span className="text-xl font-mono font-bold text-[var(--text-main)] mt-1">
+                    </h2>
+
+                    <div className="text-xl font-mono font-black text-amber-400 mt-1">
                       ₹{topThree[0].portfolioValue?.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <span className={`text-lg font-mono font-black mt-1 flex items-center gap-1 ${topThree[0].returnPct >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
-                      {topThree[0].returnPct >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-                      {topThree[0].returnPct >= 0 ? "+" : ""}{topThree[0].returnPct?.toFixed(2)}%
-                    </span>
-                  </div>
-                  <div className="w-full h-60 bg-[var(--bg-card)] border-4 border-amber-400/70 border-b-0 rounded-t-2xl flex flex-col items-center justify-start pt-6 shadow-[0_-8px_30px_rgba(251,191,36,0.15)]">
-                    <span className="text-6xl font-black text-amber-400">1</span>
+                    </div>
+
+                    <div className={`text-xs font-mono font-black flex items-center gap-1 mt-2 px-3.5 py-0.5 rounded-full ${
+                      (topThree[0].returnPct ?? topThree[0].pnl) >= 0 ? "bg-[var(--up-color)]/20 text-[var(--up-color)]" : "bg-[var(--down-color)]/20 text-[var(--down-color)]"
+                    }`}>
+                      {(topThree[0].returnPct ?? topThree[0].pnl) >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                      <span>{(topThree[0].returnPct ?? topThree[0].pnl) >= 0 ? "+" : ""}{Number(topThree[0].returnPct ?? topThree[0].pnl)?.toFixed(2)}%</span>
+                    </div>
+
                   </div>
                 </div>
               )}
 
+              {/* #3 BRONZE (Right) */}
               {topThree[2] && (
-                <div className="flex flex-col items-center w-72">
-                  <div className="flex flex-col items-center mb-4 text-center px-2">
-                    <span className="text-xl font-black text-[var(--text-main)] truncate max-w-[260px]">
+                <div className="relative group">
+                  <div className="bg-[var(--bg-card)] border border-amber-700/40 rounded-2xl p-5 flex flex-col items-center text-center shadow-md">
+                    
+                    <div className="relative mb-3">
+                      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-600 to-amber-950 p-[2px] shadow">
+                        <div className="w-full h-full bg-[#120803] rounded-2xl flex items-center justify-center font-bold text-base text-amber-500">
+                          {getInitials(getTraderName(topThree[2]))}
+                        </div>
+                      </div>
+                      <span className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-lg bg-amber-600 text-white font-black text-xs flex items-center justify-center shadow">
+                        3
+                      </span>
+                    </div>
+
+                    <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-600 mb-1 flex items-center gap-1">
+                      <Flame className="w-3 h-3 text-amber-500" />
+                      <span>Rank 3</span>
+                    </div>
+
+                    <h3 className="text-base font-bold text-[var(--text-main)] truncate max-w-[200px]">
                       {getTraderName(topThree[2])}
-                    </span>
-                    <span className="text-lg font-mono font-bold text-[var(--text-muted)] mt-1">
+                    </h3>
+
+                    <div className="text-lg font-mono font-bold text-[var(--text-main)] mt-1">
                       ₹{topThree[2].portfolioValue?.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    <span className={`text-base font-mono font-black mt-1 flex items-center gap-1 ${topThree[2].returnPct >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
-                      {topThree[2].returnPct >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                      {topThree[2].returnPct >= 0 ? "+" : ""}{topThree[2].returnPct?.toFixed(2)}%
-                    </span>
-                  </div>
-                  <div className="w-full h-32 bg-[var(--bg-card)] border-2 border-[var(--border-subtle)] border-b-0 rounded-t-2xl flex flex-col items-center justify-start pt-4 shadow-lg">
-                    <span className="text-3xl font-black text-[var(--text-muted)]">3</span>
+                    </div>
+
+                    <div className={`text-xs font-mono font-bold flex items-center gap-1 mt-2 px-3 py-0.5 rounded-full ${
+                      (topThree[2].returnPct ?? topThree[2].pnl) >= 0 ? "bg-[var(--up-color)]/20 text-[var(--up-color)]" : "bg-[var(--down-color)]/20 text-[var(--down-color)]"
+                    }`}>
+                      {(topThree[2].returnPct ?? topThree[2].pnl) >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      <span>{(topThree[2].returnPct ?? topThree[2].pnl) >= 0 ? "+" : ""}{Number(topThree[2].returnPct ?? topThree[2].pnl)?.toFixed(2)}%</span>
+                    </div>
+
                   </div>
                 </div>
               )}
+
             </div>
           )}
 
-          <div className="flex-1 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)] overflow-hidden shadow-sm">
-            <table className="w-full text-left font-mono">
-              <thead>
-                <tr className="bg-[var(--bg-root)] border-b border-[var(--border-subtle)] text-[var(--text-muted)] uppercase tracking-widest text-xs font-bold">
-                  <th className="py-4 px-8 text-center w-28">Rank</th>
-                  <th className="py-4 px-8 font-sans">Trader Name</th>
-                  <th className="py-4 px-8 text-right">Portfolio Value</th>
-                  <th className="py-4 px-8 text-right">Total P&L</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-subtle)]">
-                {rest.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="py-8 px-8 text-center text-sm text-[var(--text-muted)]">
-                      No additional traders listed.
-                    </td>
-                  </tr>
-                ) : (
-                  rest.map((entry, index) => {
-                    const isUp = entry.returnPct >= 0;
-                    return (
-                      <tr key={entry.uid || index} className="hover:bg-[var(--bg-root)] transition-colors">
-                        <td className="py-4 px-8 text-center">
-                          <span className="text-[var(--text-muted)] font-black text-lg">
-                            {String(index + 4).padStart(2, '0')}
-                          </span>
-                        </td>
-                        <td className="py-4 px-8 font-sans font-bold text-xl text-[var(--text-main)]">
-                          {getTraderName(entry)}
-                        </td>
-                        <td className="py-4 px-8 text-right font-bold text-xl text-[var(--text-main)]">
-                          ₹{entry.portfolioValue?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-4 px-8 text-right">
-                          <span className={`inline-flex items-center gap-1.5 font-black text-xl ${isUp ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
-                            {isUp ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-                            {isUp ? '+' : ''}{entry.returnPct?.toFixed(2)}%
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+          {/* 3. ROSTER (Rank 4+) */}
+          <div className="bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)] overflow-hidden shadow-lg">
+            <div className="px-6 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-root)] flex items-center justify-between font-mono text-xs font-bold uppercase text-[var(--text-muted)]">
+              <span>Remaining Competitors</span>
+              <span>{rest.length} Traders</span>
+            </div>
+
+            <div className="divide-y divide-[var(--border-subtle)]">
+              {rest.length === 0 ? (
+                <div className="p-8 text-center text-xs font-mono text-[var(--text-muted)]">
+                  Top 3 currently occupying all active tournament positions.
+                </div>
+              ) : (
+                rest.map((user, idx) => {
+                  const rank = idx + 4;
+                  const returnVal = user.returnPct ?? user.pnl ?? 0;
+                  const isUp = returnVal >= 0;
+
+                  return (
+                    <div 
+                      key={user.uid || user.id || idx}
+                      className="px-6 py-3 flex items-center justify-between hover:bg-[var(--bg-root)] transition-colors"
+                    >
+                      <div className="flex items-center gap-4">
+                        <span className="w-8 text-center font-mono font-bold text-sm text-[var(--text-muted)]">
+                          #{rank}
+                        </span>
+                        <div className="w-8 h-8 rounded-xl bg-[var(--bg-root)] border border-[var(--border-subtle)] flex items-center justify-center text-[var(--text-muted)] font-bold text-xs">
+                          {getInitials(getTraderName(user))}
+                        </div>
+                        <span className="text-sm font-bold text-[var(--text-main)]">
+                          {getTraderName(user)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-6 font-mono">
+                        <span className="text-sm font-bold text-[var(--text-main)]">
+                          ₹{user.portfolioValue?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                        
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold flex items-center gap-1 min-w-[75px] justify-center ${
+                          isUp ? 'bg-[var(--up-color)]/20 text-[var(--up-color)]' : 'bg-[var(--down-color)]/20 text-[var(--down-color)]'
+                        }`}>
+                          {isUp ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                          {isUp ? '+' : ''}{Number(returnVal).toFixed(2)}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
+
         </div>
       )}
     </div>

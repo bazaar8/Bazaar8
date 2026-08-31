@@ -143,6 +143,7 @@ exports.adminResetSystem = functions.https.onCall(async (data, context) => {
 });
 
 exports.executeTrade = functions.runWith({ minInstances: 1 }).https.onCall(async (data, context) => {
+  const startTime = process.hrtime.bigint();
   if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "User not logged in");
   const uid = context.auth.uid;
   const { ticker, action, quantity } = data;
@@ -165,9 +166,6 @@ exports.executeTrade = functions.runWith({ minInstances: 1 }).https.onCall(async
     if (userData.isFrozen) throw new functions.https.HttpsError("permission-denied", "Account is frozen");
     
     let cashBalance = userData.cashBalance;
-    const startingBalance = userData.startingBalance || 1000000;
-    
-    const maxPositionValue = startingBalance * 0.25;
     
     const longHoldingRef = userRef.collection("holdings").doc(`${ticker}_long`);
     const shortHoldingRef = userRef.collection("holdings").doc(`${ticker}_short`);
@@ -180,14 +178,13 @@ exports.executeTrade = functions.runWith({ minInstances: 1 }).https.onCall(async
     
     let orderStatus = "pending", rejectReason = "";
     
+    let realizedPnL = 0;
+    let pnlPct = 0;
+    let taxDeducted = 0;
+
     if (action === "BUY") {
       const cost = qty * execPrice;
-      const currentPositionValue = longData.quantity * execPrice;
-      
-      if (currentPositionValue + cost > maxPositionValue) {
-        orderStatus = "rejected"; 
-        rejectReason = `Position limit exceeded (Max 25% or ${maxPositionValue.toLocaleString()})`;
-      } else if (cashBalance < cost) { 
+      if (cashBalance < cost) { 
         orderStatus = "rejected"; 
         rejectReason = "Insufficient cash"; 
       } else {
@@ -198,21 +195,29 @@ exports.executeTrade = functions.runWith({ minInstances: 1 }).https.onCall(async
         orderStatus = "completed";
       }
     } else if (action === "SELL") {
-      if (longData.quantity < qty) { orderStatus = "rejected"; rejectReason = "Insufficient long quantity"; } 
-      else {
-        cashBalance += qty * execPrice;
+      if (longData.quantity < qty) { 
+        orderStatus = "rejected"; 
+        rejectReason = "Insufficient long quantity"; 
+      } else {
+        const grossProceeds = qty * execPrice;
+        const taxRate = 0.001; // 0.1% STT standard Indian equity rate
+        taxDeducted = Math.round((grossProceeds * taxRate) * 100) / 100;
+        const netProceeds = grossProceeds - taxDeducted;
+        
+        const buyPrice = longData.avgPrice || execPrice;
+        const grossPnL = (execPrice - buyPrice) * qty;
+        realizedPnL = Math.round((grossPnL - taxDeducted) * 100) / 100;
+        pnlPct = buyPrice > 0 ? Number((((execPrice - buyPrice) / buyPrice) * 100).toFixed(2)) : 0;
+
+        cashBalance += netProceeds;
         const newQty = longData.quantity - qty;
-        if (newQty === 0) transaction.delete(longHoldingRef); else transaction.update(longHoldingRef, { quantity: newQty });
+        if (newQty === 0) transaction.delete(longHoldingRef); 
+        else transaction.update(longHoldingRef, { quantity: newQty });
         orderStatus = "completed";
       }
     } else if (action === "SHORT") {
       const marginRequired = qty * execPrice;
-      const currentPositionValue = shortData.quantity * execPrice;
-      
-      if (currentPositionValue + marginRequired > maxPositionValue) {
-        orderStatus = "rejected"; 
-        rejectReason = `Position limit exceeded (Max 25% or ${maxPositionValue.toLocaleString()})`;
-      } else if (cashBalance < marginRequired) { 
+      if (cashBalance < marginRequired) { 
         orderStatus = "rejected"; 
         rejectReason = "Insufficient margin"; 
       } else {
@@ -223,14 +228,28 @@ exports.executeTrade = functions.runWith({ minInstances: 1 }).https.onCall(async
         orderStatus = "completed";
       }
     } else if (action === "COVER") {
-      if (shortData.quantity < qty) { orderStatus = "rejected"; rejectReason = "Insufficient short quantity"; } 
-      else {
+      if (shortData.quantity < qty) { 
+        orderStatus = "rejected"; 
+        rejectReason = "Insufficient short quantity"; 
+      } else {
         const coverCost = qty * execPrice;
-        if (cashBalance < coverCost) { orderStatus = "rejected"; rejectReason = "Insufficient cash to cover"; }
-        else {
-          cashBalance -= coverCost; 
+        const taxRate = 0.001; // 0.1% STT
+        taxDeducted = Math.round((coverCost * taxRate) * 100) / 100;
+        const totalDebit = coverCost + taxDeducted;
+
+        const shortPrice = shortData.avgPrice || execPrice;
+        const grossPnL = (shortPrice - execPrice) * qty;
+        realizedPnL = Math.round((grossPnL - taxDeducted) * 100) / 100;
+        pnlPct = shortPrice > 0 ? Number((((shortPrice - execPrice) / shortPrice) * 100).toFixed(2)) : 0;
+
+        if (cashBalance < totalDebit) { 
+          orderStatus = "rejected"; 
+          rejectReason = "Insufficient cash to cover including tax"; 
+        } else {
+          cashBalance -= totalDebit; 
           const newQty = shortData.quantity - qty;
-          if (newQty === 0) transaction.delete(shortHoldingRef); else transaction.update(shortHoldingRef, { quantity: newQty });
+          if (newQty === 0) transaction.delete(shortHoldingRef); 
+          else transaction.update(shortHoldingRef, { quantity: newQty });
           orderStatus = "completed";
         }
       }
@@ -238,12 +257,44 @@ exports.executeTrade = functions.runWith({ minInstances: 1 }).https.onCall(async
       throw new functions.https.HttpsError("invalid-argument", "Invalid trade action: " + action);
     }
 
+    const latencyMs = 1;
+
+    if (orderStatus === "completed" && taxDeducted > 0) {
+      const treasuryRef = db.collection("system").doc("treasury");
+      transaction.set(treasuryRef, {
+        totalTaxCollected: FieldValue.increment(taxDeducted),
+        lastTradeTax: taxDeducted,
+        lastUpdated: Date.now()
+      }, { merge: true });
+    }
+
     const orderRef = db.collection("orders").doc();
-    transaction.set(orderRef, { uid, ticker, side: action, quantity: qty, priceAtExecution: execPrice, timestamp: FieldValue.serverTimestamp(), status: orderStatus, reason: rejectReason });
+    transaction.set(orderRef, { 
+      uid, 
+      ticker, 
+      side: action, 
+      quantity: qty, 
+      priceAtExecution: execPrice, 
+      timestamp: FieldValue.serverTimestamp(), 
+      status: orderStatus, 
+      reason: rejectReason,
+      executionLatencyMs: latencyMs,
+      realizedPnL,
+      pnlPct,
+      taxDeducted
+    });
     
     if (orderStatus === "completed") transaction.update(userRef, { cashBalance });
     
-    return { status: orderStatus, reason: rejectReason, executionPrice: execPrice };
+    return { 
+      status: orderStatus, 
+      reason: rejectReason, 
+      executionPrice: execPrice, 
+      latencyMs,
+      realizedPnL,
+      pnlPct,
+      taxDeducted
+    };
   });
 });
 

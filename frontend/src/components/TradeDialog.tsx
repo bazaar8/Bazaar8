@@ -23,7 +23,7 @@ export default function TradeDialog({
   const [quantity, setQuantity] = useState<string>("1");
   const [loading, setLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-  const [result, setResult] = useState<{ status: string; reason?: string } | null>(null);
+  const [result, setResult] = useState<{ status: string; reason?: string; latencyMs?: number; roundtripMs?: number } | null>(null);
 
   const numQty = Math.max(0, parseInt(quantity, 10) || 0);
   const estimatedTotal = numQty * currentPrice;
@@ -213,6 +213,19 @@ export default function TradeDialog({
                       +{q}
                     </button>
                   ))}
+                  {longQty > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSide("SELL");
+                        setQuantity(String(longQty));
+                      }}
+                      className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded text-[9px] font-bold font-mono"
+                      title="Sell all shares of this stock"
+                    >
+                      MAX ({longQty})
+                    </button>
+                  )}
                 </div>
               </div>
               <input
@@ -224,11 +237,19 @@ export default function TradeDialog({
               />
             </div>
 
-            <div className="p-2.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded flex items-center justify-between font-mono">
-              <span className="text-[10px] text-[var(--text-muted)] uppercase">Est. Total</span>
-              <span className="text-sm font-bold text-[var(--up-color)]">
-                ₹{estimatedTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-              </span>
+            <div className="p-2.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded space-y-1 font-mono text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-[var(--text-muted)] uppercase">Gross Value</span>
+                <span className="text-sm font-bold text-[var(--text-main)]">
+                  ₹{estimatedTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              {(side === "SELL" || side === "COVER") && (
+                <div className="flex items-center justify-between text-[10px] text-amber-400">
+                  <span>0.1% Securities Transaction Tax (STT):</span>
+                  <span>-₹{(estimatedTotal * 0.001).toFixed(2)}</span>
+                </div>
+              )}
             </div>
 
             <button

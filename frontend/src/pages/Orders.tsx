@@ -25,7 +25,11 @@ export default function Orders() {
       snap.forEach((d) => {
         ords.push(d.data() as Order);
       });
-      ords.sort((a, b) => b.timestamp - a.timestamp);
+      ords.sort((a, b) => {
+        const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp || 0);
+        const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp || 0);
+        return tB - tA;
+      });
       setOrders(ords);
       setLoading(false);
     });
@@ -82,29 +86,61 @@ export default function Orders() {
                   <th className="p-3">Instrument</th>
                   <th className="p-3 text-right">Units</th>
                   <th className="p-3 text-right">Exec Price</th>
+                  <th className="p-3 text-right">Profit / Loss</th>
+                  <th className="p-3 text-right">0.1% STT</th>
                   <th className="p-3 text-right">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-subtle)]">
-                {filtered.map((o, idx) => (
-                  <tr key={idx} className="hover:bg-[var(--bg-root)] transition-colors">
-                    <td className="p-3">
-                      <span className={`font-bold ${o.side === "BUY" || o.side === "COVER" ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
-                        {o.side}
-                      </span>
-                    </td>
-                    <td className="p-3 text-[var(--text-main)] font-bold">{o.ticker}</td>
-                    <td className="p-3 text-right text-[var(--text-main)]">{o.quantity}</td>
-                    <td className="p-3 text-right text-[var(--text-main)]">₹{o.priceAtExecution?.toFixed(2) || "0.00"}</td>
-                    <td className="p-3 text-right">
-                      <span className={`px-2 py-0.5 text-[9px] uppercase font-bold rounded ${
-                        o.status === "completed" ? "bg-[#08998115] text-[var(--up-color)]" : "bg-[#f2364515] text-[var(--down-color)]"
-                      }`}>
-                        {o.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((o, idx) => {
+                  const hasPnL = o.realizedPnL !== undefined && o.realizedPnL !== 0;
+                  const isUp = (o.realizedPnL || 0) >= 0;
+
+                  return (
+                    <tr key={idx} className="hover:bg-[var(--bg-root)] transition-colors">
+                      <td className="p-3">
+                        <span className={`font-bold ${o.side === "BUY" || o.side === "COVER" ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
+                          {o.side}
+                        </span>
+                      </td>
+                      <td className="p-3 text-[var(--text-main)] font-bold">{o.ticker}</td>
+                      <td className="p-3 text-right text-[var(--text-main)]">{o.quantity}</td>
+                      <td className="p-3 text-right text-[var(--text-main)]">₹{o.priceAtExecution?.toFixed(2) || "0.00"}</td>
+                      <td className="p-3 text-right">
+                        {hasPnL ? (
+                          <span className={`font-bold font-mono ${isUp ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
+                            {isUp ? "+" : ""}₹{o.realizedPnL?.toFixed(2)}
+                            {o.pnlPct !== undefined && (
+                              <span className="text-[10px] block opacity-80">
+                                ({o.pnlPct >= 0 ? "+" : ""}{o.pnlPct.toFixed(2)}%)
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-[var(--text-muted)] text-[10px]">
+                            {o.side === "BUY" ? "Position Opened" : o.side === "SHORT" ? "Short Opened" : "—"}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 text-right">
+                        {o.taxDeducted ? (
+                          <span className="text-amber-400 font-mono font-bold text-[11px]">
+                            ₹{o.taxDeducted.toFixed(2)}
+                          </span>
+                        ) : (
+                          <span className="text-[var(--text-muted)] text-[10px]">—</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className={`px-2 py-0.5 text-[9px] uppercase font-bold rounded ${
+                          o.status === "completed" ? "bg-[#08998115] text-[var(--up-color)]" : "bg-[#f2364515] text-[var(--down-color)]"
+                        }`}>
+                          {o.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

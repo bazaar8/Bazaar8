@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme";
-import { ShieldAlert, ArrowRight, Lock, Mail, Activity, BarChart2, Sun, Moon } from "lucide-react";
+import { ShieldAlert, ArrowRight, Lock, Mail, Zap, BarChart2, Sun, Moon } from "lucide-react";
 import logoUrl from '../assets/logo.png';
 
 export default function Login() {
@@ -92,7 +92,7 @@ export default function Login() {
           </div>
           <div className="flex items-center justify-between mt-6 text-[var(--text-muted)] text-sm font-mono">
             <span className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-[var(--up-color)]" /> Live Market Engine Active
+              <Zap className="w-4 h-4 text-[var(--up-color)]" /> Live Market Engine Active
             </span>
             <span className="flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-[var(--up-color)]" /> IST Sync

@@ -1,0 +1,52 @@
+Ticker,Name,Sector,BasePrice,Volatility
+RELIANCE,Reliance Industries,Energy,2950.0,0.002
+TCS,Tata Consultancy Services,IT,4150.0,0.0018
+HDFCBANK,HDFC Bank,Financial Services,1720.0,0.0015
+ICICIBANK,ICICI Bank,Financial Services,1290.0,0.0017
+INFY,Infosys,IT,1850.0,0.0022
+BHARTIARTL,Bharti Airtel,Telecom,1650.0,0.002
+ITC,ITC Limited,FMCG,470.0,0.0012
+SBIN,State Bank of India,Financial Services,830.0,0.002
+LICI,Life Insurance Corporation,Financial Services,950.0,0.0022
+HINDUNILVR,Hindustan Unilever,FMCG,2450.0,0.0013
+LT,Larsen & Toubro,Construction,3600.0,0.0019
+BAJFINANCE,Bajaj Finance,Financial Services,7200.0,0.0025
+KOTAKBANK,Kotak Mahindra Bank,Financial Services,1850.0,0.0016
+HCLTECH,HCL Technologies,IT,1850.0,0.002
+MARUTI,Maruti Suzuki,Automobile,12800.0,0.0021
+SUNPHARMA,Sun Pharmaceutical,Pharma,1780.0,0.0018
+AXISBANK,Axis Bank,Financial Services,1180.0,0.0018
+ADANIENT,Adani Enterprises,Diversified,2650.0,0.003
+NTPC,NTPC Limited,Power,380.0,0.0015
+ULTRACEMCO,UltraTech Cement,Cement,11500.0,0.0019
+TITAN,Titan Company,Consumer Durables,3450.0,0.002
+BAJAJFINSV,Bajaj Finserv,Financial Services,1900.0,0.0022
+ONGC,Oil & Natural Gas Corp,Energy,270.0,0.0017
+M&M,Mahindra & Mahindra,Automobile,3150.0,0.0021
+POWERGRID,Power Grid Corporation,Power,330.0,0.0013
+ADANIPORTS,Adani Ports & SEZ,Infrastructure,1450.0,0.0026
+WIPRO,Wipro,IT,570.0,0.0019
+COALINDIA,Coal India,Energy,440.0,0.0016
+NESTLEIND,Nestle India,FMCG,2350.0,0.0012
+JSWSTEEL,JSW Steel,Metals,1020.0,0.0022
+ASIANPAINT,Asian Paints,Consumer Durables,2400.0,0.0018
+TATAMOTORS,Tata Motors,Automobile,880.0,0.0025
+TATASTEEL,Tata Steel,Metals,165.0,0.0021
+BAJAJ-AUTO,Bajaj Auto,Automobile,9800.0,0.002
+TECHM,Tech Mahindra,IT,1650.0,0.0021
+GRASIM,Grasim Industries,Cement,2750.0,0.0018
+HINDALCO,Hindalco Industries,Metals,700.0,0.0022
+SBILIFE,SBI Life Insurance,Financial Services,1750.0,0.0017
+CIPLA,Cipla,Pharma,1520.0,0.0016
+DRREDDY,Dr Reddy's Laboratories,Pharma,1280.0,0.0018
+EICHERMOT,Eicher Motors,Automobile,4900.0,0.002
+HDFCLIFE,HDFC Life Insurance,Financial Services,720.0,0.0017
+APOLLOHOSP,Apollo Hospitals,Healthcare,7200.0,0.002
+DIVISLAB,Divi's Laboratories,Pharma,6100.0,0.0019
+BRITANNIA,Britannia Industries,FMCG,5600.0,0.0014
+INDUSINDBK,IndusInd Bank,Financial Services,900.0,0.003
+HEROMOTOCO,Hero MotoCorp,Automobile,5200.0,0.002
+TATACONSUM,Tata Consumer Products,FMCG,1050.0,0.0017
+UPL,UPL Limited,Chemicals,650.0,0.0024
+SHRIRAMFIN,Shriram Finance,Financial Services,3300.0,0.0022
+TRENT,Trent Limited,Retail,5800.0,0.0028

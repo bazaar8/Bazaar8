@@ -22,6 +22,11 @@ export interface Order {
   priceAtExecution: number;
   timestamp: any;
   status: 'pending' | 'completed' | 'rejected';
+  reason?: string;
+  executionLatencyMs?: number;
+  realizedPnL?: number;
+  pnlPct?: number;
+  taxDeducted?: number;
 }
 
 export interface Stock {

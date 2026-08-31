@@ -45,7 +45,7 @@ export function useUserTradingData() {
     }, (err) => console.warn("Holdings Error:", err));
 
     const ordersColRef = collection(db, "orders");
-    const ordersQ = query(ordersColRef, where("uid", "==", user.uid), limit(10));
+    const ordersQ = query(ordersColRef, where("uid", "==", user.uid), limit(200));
     
     const unsubOrders = onSnapshot(ordersQ, (snap) => {
 

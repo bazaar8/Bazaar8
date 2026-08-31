@@ -37,6 +37,10 @@ export function useWatchlists() {
 
   const createWatchlist = async (name: string) => {
     if (!user || !name.trim()) return;
+    if (watchlists.length >= 3) {
+      alert("Maximum 3 watchlists allowed. Please delete or rename an existing list.");
+      return;
+    }
     await addDoc(collection(db, "users", user.uid, "watchlists"), {
       name: name.trim(),
       tickers: [],

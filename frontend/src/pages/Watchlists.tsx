@@ -14,7 +14,11 @@ export default function Watchlists() {
   const activeList = watchlists.find((w) => w.id === (activeListId || watchlists[0]?.id));
 
   const handleCreate = () => {
-    const name = window.prompt("Enter new watchlist name:");
+    if (watchlists.length >= 3) {
+      alert("Maximum 3 watchlists allowed. Please delete or rename an existing list.");
+      return;
+    }
+    const name = window.prompt("Enter new watchlist name (max 3 lists):");
     if (name) createWatchlist(name);
   };
 
@@ -46,6 +50,9 @@ export default function Watchlists() {
         <div className="flex items-center gap-2">
           <LayoutList className="w-5 h-5 text-[var(--up-color)]" />
           <h1 className="text-lg font-bold text-[var(--text-main)] tracking-tight">Watchlists</h1>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-muted)]">
+            {watchlists.length}/3 LISTS
+          </span>
         </div>
         <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase bg-[var(--bg-card)] px-2 py-1 border border-[var(--border-subtle)] rounded">MARKET: {marketStatus}</div>
       </div>
@@ -55,13 +62,19 @@ export default function Watchlists() {
         <div className="w-full lg:w-[260px] flex flex-col gap-4">
           <div className="terminal-card p-4">
             <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--border-subtle)]">
-              <span className="text-xs font-bold text-[var(--text-main)]">Your Lists</span>
-              <button 
-                onClick={handleCreate} 
-                className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-[var(--up-color)] hover:bg-[var(--border-subtle)] transition-colors"
-              >
-                <Plus className="w-3 h-3" /> New
-              </button>
+              <span className="text-xs font-bold text-[var(--text-main)]">Your Lists ({watchlists.length}/3)</span>
+              {watchlists.length < 3 ? (
+                <button 
+                  onClick={handleCreate} 
+                  className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-[var(--up-color)] hover:bg-[var(--border-subtle)] transition-colors"
+                >
+                  <Plus className="w-3 h-3" /> New
+                </button>
+              ) : (
+                <span className="text-[9px] font-mono text-[var(--text-muted)] px-1.5 py-0.5 bg-[var(--bg-root)] rounded border border-[var(--border-subtle)]">
+                  Max 3
+                </span>
+              )}
             </div>
 
             {watchlists.length === 0 ? (

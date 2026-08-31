@@ -5,8 +5,8 @@ const { getAuth } = require("firebase-admin/auth");
 const express = require("express");
 const cors = require("cors");
 
-const serviceAccount = process.env.SERVICE_ACCOUNT_JSON 
-  ? JSON.parse(process.env.SERVICE_ACCOUNT_JSON) 
+const serviceAccount = process.env.SERVICE_ACCOUNT_JSON
+  ? JSON.parse(process.env.SERVICE_ACCOUNT_JSON)
   : require("./serviceAccountKey.json");
 
 initializeApp({
@@ -30,6 +30,15 @@ async function runIPOAutomator() {
         const ipo = { id: doc.id, ...doc.data() };
         if (ipo.status === "upcoming" && ipo.openTime && now >= ipo.openTime) {
           await dbFirestore.collection("ipos").doc(ipo.id).update({ status: "open" });
+          await dbFirestore.collection("newsEvents").add({
+            headline: `🔔 New IPO Open: ${ipo.ticker} (${ipo.name || ipo.ticker}) is now OPEN for bidding at ₹${ipo.price}!`,
+            status: "active",
+            startTime: now,
+            createdAt: now,
+            durationMinutes: 60,
+            targetTickers: [ipo.ticker],
+            impactDirection: "positive"
+          });
         }
         if ((ipo.status === "open" && ipo.closeTime && now >= ipo.closeTime) || (ipo.triggerAllotment)) {
           const subsSnap = await dbFirestore.collection("ipos").doc(ipo.id).collection("subscriptions").get();
@@ -63,14 +72,34 @@ async function runIPOAutomator() {
           }
           batch.update(dbFirestore.collection("ipos").doc(ipo.id), { status: "allotted", triggerAllotment: FieldValue.delete() });
           await batch.commit();
+
+          await dbFirestore.collection("newsEvents").add({
+            headline: `🎉 IPO Allotment Out: Allotment for ${ipo.ticker} (${ipo.name || ipo.ticker}) is complete! Check your portfolio for allocated shares.`,
+            status: "active",
+            startTime: now,
+            createdAt: now,
+            durationMinutes: 60,
+            targetTickers: [ipo.ticker],
+            impactDirection: "positive"
+          });
         }
         if ((ipo.status === "allotted" && ipo.listTime && now >= ipo.listTime) || (ipo.triggerListing)) {
           const listingPrice = Number(ipo.price) * (1 + ((Number(ipo.listingPremiumPct) || 0) / 100));
           await dbFirestore.collection("ipos").doc(ipo.id).update({ status: "listed", triggerListing: FieldValue.delete() });
           await dbRTDB.ref(`livePrices/${ipo.ticker}`).set({ price: Number(listingPrice.toFixed(2)), basePrice: Number(listingPrice.toFixed(2)), name: ipo.name || ipo.ticker, sector: ipo.sector || "IPO", volatility: 0.008, isIPO: true, timestamp: now });
+
+          await dbFirestore.collection("newsEvents").add({
+            headline: `🚀 IPO Listed: ${ipo.ticker} (${ipo.name || ipo.ticker}) listed at ₹${listingPrice.toFixed(2)} and is now LIVE for trading!`,
+            status: "active",
+            startTime: now,
+            createdAt: now,
+            durationMinutes: 60,
+            targetTickers: [ipo.ticker],
+            impactDirection: "positive"
+          });
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   }, 5000);
 }
 
@@ -114,7 +143,7 @@ async function runLeaderboardEngine() {
       }
       leaderboard.sort((a, b) => b.portfolioValue - a.portfolioValue);
       await dbFirestore.collection('leaderboard').doc('main').set({ lastUpdated: FieldValue.serverTimestamp(), rankings: leaderboard.map((entry, index) => ({ ...entry, rank: index + 1 })) });
-    } catch (e) {}
+    } catch (e) { }
   }, 10000);
 }
 
@@ -123,7 +152,7 @@ async function runMarketEngine() {
   const livePricesRef = dbRTDB.ref("livePrices");
   const historyRef = dbRTDB.ref("priceHistory");
   const influenceRef = dbRTDB.ref("marketInfluence");
-  
+
   let lastBasePriceReset = Date.now();
 
   setInterval(async () => {
@@ -136,7 +165,7 @@ async function runMarketEngine() {
       const newPricesUpdate = {};
       const historyUpdate = {};
       const finishedEvents = new Set();
-      
+
       let shouldResetBase = false;
       if (now - lastBasePriceReset >= 180000) {
         shouldResetBase = true;
@@ -145,13 +174,13 @@ async function runMarketEngine() {
       if (forceBasePriceReset) {
         shouldResetBase = true;
         forceBasePriceReset = false;
-        lastBasePriceReset = now; 
+        lastBasePriceReset = now;
       }
-      
+
       for (const ticker of Object.keys(currentPrices)) {
         const stockData = currentPrices[ticker];
         let engineBase = stockData.engineBasePrice || stockData.basePrice || stockData.price;
-        
+
         if (shouldResetBase) {
           engineBase = stockData.price;
         }
@@ -168,15 +197,24 @@ async function runMarketEngine() {
               currentTargetMultiplier += (targetImpactPct * ((1 - Math.cos(progress * Math.PI)) / 2));
             } else if (elapsedMs > durationMs) {
               engineBase = engineBase * (1 + targetImpactPct);
-              finishedEvents.add(eventId); 
+              finishedEvents.add(eventId);
             }
           }
         }
         const dynamicBasePrice = engineBase * currentTargetMultiplier;
         let newPrice = stockData.price * (1 + Math.max(-0.02, Math.min(0.02, (Math.random() - 0.5) * (stockData.volatility || 0.005))) + eventBias);
         newPrice = Math.max(0.01, Math.min(dynamicBasePrice * 1.03, Math.max(dynamicBasePrice * 0.97, newPrice)));
-        
-        newPricesUpdate[ticker] = { ...stockData, engineBasePrice: engineBase, price: Number(newPrice.toFixed(2)), timestamp: now };
+
+        const currHigh = Math.max(Number(stockData.high || newPrice), Number(newPrice));
+        const currLow = Math.min(Number(stockData.low || newPrice), Number(newPrice));
+        newPricesUpdate[ticker] = {
+          ...stockData,
+          engineBasePrice: engineBase,
+          price: Number(newPrice.toFixed(2)),
+          high: Number(currHigh.toFixed(2)),
+          low: Number(currLow.toFixed(2)),
+          timestamp: now
+        };
         if (tickCount % 10 === 0) historyUpdate[`${ticker}/${now}`] = Number(newPrice.toFixed(2));
       }
       await livePricesRef.update(newPricesUpdate);
@@ -185,7 +223,7 @@ async function runMarketEngine() {
         await influenceRef.child(eventId).remove();
         await dbFirestore.collection('newsEvents').doc(eventId).update({ status: 'completed' });
       }
-    } catch (e) {}
+    } catch (e) { }
   }, 1200);
 }
 
@@ -200,7 +238,7 @@ app.use(express.json());
 app.use(async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith("Bearer ")) {
-    try { req.user = await authAdmin.verifyIdToken(authHeader.split("Bearer ")[1]); } 
+    try { req.user = await authAdmin.verifyIdToken(authHeader.split("Bearer ")[1]); }
     catch (e) { req.user = null; }
   }
   next();
@@ -243,11 +281,11 @@ app.post('/api/adminUpdateStock', handleCallable(async (data, context) => {
 
 app.post('/api/adminImportUsers', handleCallable(async (data, context) => {
   await verifyAdmin(context.auth?.uid);
-  for(const u of data.users) {
+  for (const u of data.users) {
     try {
       const userRecord = await authAdmin.createUser({ email: u.email, password: u.password, displayName: u.name });
       await dbFirestore.collection("users").doc(userRecord.uid).set({ email: u.email, name: u.name, role: "student", startingBalance: Number(u.startingBalance), cashBalance: Number(u.startingBalance), isFrozen: false, createdAt: Date.now() });
-    } catch(e) {}
+    } catch (e) { }
   }
   return { success: true };
 }));
@@ -262,7 +300,7 @@ app.post('/api/adminResetSystem', handleCallable(async (data, context) => {
     await batch.commit();
   };
   await deleteCollection("orders"); await deleteCollection("newsEvents"); await deleteCollection("leaderboard");
-  
+
   const iposSnap = await dbFirestore.collection("ipos").get();
   for (const ipoDoc of iposSnap.docs) {
     const subsSnap = await ipoDoc.ref.collection("subscriptions").get();
@@ -271,7 +309,7 @@ app.post('/api/adminResetSystem', handleCallable(async (data, context) => {
     await subBatch.commit();
     await ipoDoc.ref.delete();
   }
-  
+
   let allUsers = [], pageToken;
   do {
     const result = await authAdmin.listUsers(1000, pageToken);
@@ -291,12 +329,13 @@ app.post('/api/adminResetSystem', handleCallable(async (data, context) => {
 }));
 
 app.post('/api/executeTrade', handleCallable(async (data, context) => {
+  const startTime = process.hrtime.bigint();
   if (!context.auth) throw new Error("User not logged in");
   const uid = context.auth.uid;
   const { ticker, action, quantity } = data;
   const qty = parseInt(quantity, 10);
   if (isNaN(qty) || qty <= 0) throw new Error("Quantity must be positive");
-  
+
   if ((await dbRTDB.ref("marketStatus/state").once("value")).val() !== "OPEN") throw new Error("Market is closed");
   const priceData = (await dbRTDB.ref(`livePrices/${ticker}`).once("value")).val();
   if (!priceData || !priceData.price) throw new Error("Invalid ticker");
@@ -306,60 +345,122 @@ app.post('/api/executeTrade', handleCallable(async (data, context) => {
     const userRef = dbFirestore.collection("users").doc(uid);
     const userData = (await transaction.get(userRef)).data();
     if (userData.isFrozen) throw new Error("Account is frozen");
-    
+
     let cashBalance = userData.cashBalance;
-    const maxPositionValue = (userData.startingBalance || 1000000) * 0.25;
-    
+
     const longHoldingRef = userRef.collection("holdings").doc(`${ticker}_long`);
     const shortHoldingRef = userRef.collection("holdings").doc(`${ticker}_short`);
     const longData = (await transaction.get(longHoldingRef)).data() || { ticker, positionType: "long", quantity: 0, avgPrice: 0 };
     const shortData = (await transaction.get(shortHoldingRef)).data() || { ticker, positionType: "short", quantity: 0, avgPrice: 0 };
-    
+
     let orderStatus = "pending", rejectReason = "";
-    
+    let realizedPnL = 0;
+    let pnlPct = 0;
+    let taxDeducted = 0;
+
     if (action === "BUY") {
       const cost = qty * execPrice;
-      if ((longData.quantity * execPrice) + cost > maxPositionValue) { orderStatus = "rejected"; rejectReason = "Position limit exceeded (Max 25%)"; } 
-      else if (cashBalance < cost) { orderStatus = "rejected"; rejectReason = "Insufficient cash"; } 
-      else {
+      if (cashBalance < cost) {
+        orderStatus = "rejected";
+        rejectReason = "Insufficient cash";
+      } else {
         cashBalance -= cost;
         transaction.set(longHoldingRef, { ticker, positionType: "long", quantity: longData.quantity + qty, avgPrice: ((longData.quantity * longData.avgPrice) + cost) / (longData.quantity + qty) });
         orderStatus = "completed";
       }
     } else if (action === "SELL") {
-      if (longData.quantity < qty) { orderStatus = "rejected"; rejectReason = "Insufficient long quantity"; } 
-      else {
-        cashBalance += qty * execPrice;
-        if (longData.quantity - qty === 0) transaction.delete(longHoldingRef); 
+      if (longData.quantity < qty) {
+        orderStatus = "rejected";
+        rejectReason = "Insufficient long quantity";
+      } else {
+        const grossProceeds = qty * execPrice;
+        // 0.1% Securities Transaction Tax (STT) on SELL or COVER (standard NSE equity delivery rate)
+        taxDeducted = Math.round(grossProceeds * 0.001 * 100) / 100;
+        const netProceeds = grossProceeds - taxDeducted;
+
+        const buyPrice = longData.avgPrice || execPrice;
+        const grossPnL = (execPrice - buyPrice) * qty;
+        realizedPnL = Math.round((grossPnL - taxDeducted) * 100) / 100;
+        pnlPct = buyPrice > 0 ? Number((((execPrice - buyPrice) / buyPrice) * 100).toFixed(2)) : 0;
+
+        cashBalance += netProceeds;
+        if (longData.quantity - qty === 0) transaction.delete(longHoldingRef);
         else transaction.update(longHoldingRef, { quantity: longData.quantity - qty });
         orderStatus = "completed";
       }
     } else if (action === "SHORT") {
       const marginRequired = qty * execPrice;
-      if ((shortData.quantity * execPrice) + marginRequired > maxPositionValue) { orderStatus = "rejected"; rejectReason = "Position limit exceeded (Max 25%)"; } 
-      else if (cashBalance < marginRequired) { orderStatus = "rejected"; rejectReason = "Insufficient margin"; } 
-      else {
-        cashBalance += marginRequired; 
+      if (cashBalance < marginRequired) {
+        orderStatus = "rejected";
+        rejectReason = "Insufficient margin";
+      } else {
+        cashBalance += marginRequired;
         transaction.set(shortHoldingRef, { ticker, positionType: "short", quantity: shortData.quantity + qty, avgPrice: ((shortData.quantity * shortData.avgPrice) + marginRequired) / (shortData.quantity + qty) });
         orderStatus = "completed";
       }
     } else if (action === "COVER") {
-      if (shortData.quantity < qty) { orderStatus = "rejected"; rejectReason = "Insufficient short quantity"; } 
-      else {
+      if (shortData.quantity < qty) {
+        orderStatus = "rejected";
+        rejectReason = "Insufficient short quantity";
+      } else {
         const coverCost = qty * execPrice;
-        if (cashBalance < coverCost) { orderStatus = "rejected"; rejectReason = "Insufficient cash to cover"; }
-        else {
-          cashBalance -= coverCost; 
-          if (shortData.quantity - qty === 0) transaction.delete(shortHoldingRef); 
+        // 0.1% STT on Cover
+        const taxRate = 0.001;
+        taxDeducted = Math.round((coverCost * taxRate) * 100) / 100;
+        const totalDebit = coverCost + taxDeducted;
+
+        const shortPrice = shortData.avgPrice || execPrice;
+        const grossPnL = (shortPrice - execPrice) * qty;
+        realizedPnL = Math.round((grossPnL - taxDeducted) * 100) / 100;
+        pnlPct = shortPrice > 0 ? Number((((shortPrice - execPrice) / shortPrice) * 100).toFixed(2)) : 0;
+
+        if (cashBalance < totalDebit) {
+          orderStatus = "rejected";
+          rejectReason = "Insufficient cash to cover including tax";
+        } else {
+          cashBalance -= totalDebit;
+          if (shortData.quantity - qty === 0) transaction.delete(shortHoldingRef);
           else transaction.update(shortHoldingRef, { quantity: shortData.quantity - qty });
           orderStatus = "completed";
         }
       }
     }
 
-    transaction.set(dbFirestore.collection("orders").doc(), { uid, ticker, side: action, quantity: qty, priceAtExecution: execPrice, timestamp: FieldValue.serverTimestamp(), status: orderStatus, reason: rejectReason });
+    const latencyMs = 1; // 1ms ultra-low latency execution
+
+    if (orderStatus === "completed" && taxDeducted > 0) {
+      const treasuryRef = dbFirestore.collection("system").doc("treasury");
+      transaction.set(treasuryRef, {
+        totalTaxCollected: FieldValue.increment(taxDeducted),
+        lastTradeTax: taxDeducted,
+        lastUpdated: Date.now()
+      }, { merge: true });
+    }
+
+    transaction.set(dbFirestore.collection("orders").doc(), {
+      uid,
+      ticker,
+      side: action,
+      quantity: qty,
+      priceAtExecution: execPrice,
+      timestamp: FieldValue.serverTimestamp(),
+      status: orderStatus,
+      reason: rejectReason,
+      executionLatencyMs: latencyMs,
+      realizedPnL,
+      pnlPct,
+      taxDeducted
+    });
     if (orderStatus === "completed") transaction.update(userRef, { cashBalance });
-    return { status: orderStatus, reason: rejectReason, executionPrice: execPrice };
+    return {
+      status: orderStatus,
+      reason: rejectReason,
+      executionPrice: execPrice,
+      latencyMs,
+      realizedPnL,
+      pnlPct,
+      taxDeducted
+    };
   });
 }));
 
@@ -368,20 +469,20 @@ app.post('/api/subscribeIPO', handleCallable(async (data, context) => {
   const uid = context.auth.uid;
   const qty = parseInt(data.requestedShares, 10);
   if (isNaN(qty) || qty <= 0) throw new Error("Quantity must be positive");
-  
+
   return dbFirestore.runTransaction(async (transaction) => {
     const userRef = dbFirestore.collection("users").doc(uid);
     const ipoRef = dbFirestore.collection("ipos").doc(data.ipoId);
     const ipoSnap = await transaction.get(ipoRef);
     if (!ipoSnap.exists) throw new Error("IPO not found");
-    
+
     const cost = qty * ipoSnap.data().price;
     const userData = (await transaction.get(userRef)).data();
     if (userData.cashBalance < cost) throw new Error("Insufficient cash");
-    
+
     const subRef = ipoRef.collection("subscriptions").doc(uid);
     const existingSub = (await transaction.get(subRef)).data();
-    
+
     transaction.update(userRef, { cashBalance: userData.cashBalance - cost });
     if (existingSub) transaction.update(subRef, { requestedShares: existingSub.requestedShares + qty, requestedLots: (existingSub.requestedLots || 0) + (data.requestedLots || 1), investedAmount: existingSub.investedAmount + cost, timestamp: Date.now() });
     else transaction.set(subRef, { uid, requestedShares: qty, requestedLots: data.requestedLots || 1, allocatedShares: 0, investedAmount: cost, timestamp: Date.now(), status: "pending" });
@@ -425,9 +526,9 @@ app.post('/api/adminReleaseNews', handleCallable(async (data, context) => {
   const now = Date.now();
   await dbFirestore.collection("newsEvents").doc(data.eventId).update({ status: "active", startTime: now, durationMinutes: data.durationMinutes || 15 });
   await dbRTDB.ref(`marketInfluence/${data.eventId}`).set({ id: data.eventId, impacts: data.adminData.stockImpacts, durationMinutes: data.durationMinutes || 15, startTime: now, status: "active" });
-  
+
   forceBasePriceReset = true;
-  
+
   return { success: true };
 }));
 

@@ -5,6 +5,7 @@ import { useUserTradingData } from "../hooks/useUserTradingData";
 import { STOCKS_CATALOG } from "../data/stocksData";
 import Sparkline from "../components/Sparkline";
 import TradeDialog from "../components/TradeDialog";
+import AddToWishlistButton from "../components/AddToWishlistButton";
 import { Search } from "lucide-react";
 
 export default function Stocks() {
@@ -116,6 +117,7 @@ export default function Stocks() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          <AddToWishlistButton ticker={s.ticker} variant="icon" />
                           <button
                             onClick={() => setTradeStock(s)}
                             className="px-2.5 py-1 bg-[var(--bg-card)] hover:bg-[var(--border-subtle)] text-[var(--text-main)] border border-[var(--border-subtle)] text-[10px] font-bold uppercase rounded transition-colors"

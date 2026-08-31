@@ -4,9 +4,11 @@ import { httpsCallable } from "../config/api";
 import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
 import { CheckCircle, TrendingUp, Clock, X } from "lucide-react";
+import { useNotifications } from "../context/NotificationContext";
 
 export default function IPO() {
   const { user } = useAuth();
+  const { notify } = useNotifications();
   const [ipos, setIpos] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
@@ -51,11 +53,22 @@ export default function IPO() {
         requestedLots: lotsToApply
       });
       
-      alert(`Applied for ${lotsToApply} lot(s) of ${selectedIpo.ticker}!`);
+      notify({
+        type: "ipo",
+        title: `IPO Bid Confirmed: ${selectedIpo.ticker}`,
+        message: `Applied for ${lotsToApply} lot(s) (${totalShares} shares). Funds blocked pending allotment.`,
+        impact: "positive",
+        tickers: [selectedIpo.ticker]
+      });
       setSelectedIpo(null);
       setLotsToApply(1);
     } catch (err: any) {
-      alert("Application Failed: " + err.message);
+      notify({
+        type: "alert",
+        title: "IPO Application Failed",
+        message: err.message || "Failed to submit IPO application",
+        impact: "negative"
+      });
     } finally {
       setProcessingIpoId(null);
     }
@@ -85,7 +98,7 @@ export default function IPO() {
       <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
         <div>
           <h1 className="text-lg font-bold text-[var(--text-main)] tracking-tight">Primary Market (IPO)</h1>
-          <p className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5 uppercase tracking-wider">Initial Public Offerings & Lotteries</p>
+          <p className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5 uppercase tracking-wider">Initial Public Offerings</p>
         </div>
       </div>
 
@@ -100,13 +113,14 @@ export default function IPO() {
             const lotSize = Number(ipo.lotSize) || 1;
             const minInvestment = price * lotSize;
             const gmp = Number(ipo.listingPremiumPct) || 0;
+            const subscriptionRate = ipo.subscriptionRate !== undefined ? Number(ipo.subscriptionRate) : Number(((Number(ipo.totalSubscribedLots) || 0) / (Number(ipo.totalLots) || 1)).toFixed(2));
             
             const mySub = subscriptions[ipo.id];
             const hasApplied = !!mySub;
 
             return (
               <div key={ipo.id} className="terminal-card flex flex-col justify-between p-5 space-y-4">
-                <div>
+                <div className="space-y-3">
                   <div className="flex items-start justify-between">
                     <div>
                       <h2 className="text-base font-bold text-[var(--text-main)] tracking-tight">{ipo.ticker}</h2>
@@ -122,7 +136,42 @@ export default function IPO() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 mt-4 text-xs font-mono">
+                  {/* Live Subscription Status & Progress Bar */}
+                  <div className="p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded space-y-2 font-mono">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Subscription</span>
+                        {subscriptionRate >= 1.0 ? (
+                          <span className="px-1.5 py-0.5 bg-[#ef444415] text-[#ef4444] border border-[#ef444430] text-[9px] font-bold uppercase rounded flex items-center gap-0.5">
+                            🔥 Over-subscribed
+                          </span>
+                        ) : subscriptionRate > 0 ? (
+                          <span className="px-1.5 py-0.5 bg-[#3b82f615] text-[#3b82f6] border border-[#3b82f630] text-[9px] font-bold uppercase rounded">
+                            Active
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 bg-[var(--bg-card)] text-[var(--text-muted)] border border-[var(--border-subtle)] text-[9px] font-bold uppercase rounded">
+                            Open
+                          </span>
+                        )}
+                      </div>
+                      <span className={`text-xs font-bold ${subscriptionRate >= 1.0 ? 'text-[var(--up-color)]' : subscriptionRate > 0 ? 'text-[#3b82f6]' : 'text-[var(--text-muted)]'}`}>
+                        {subscriptionRate.toFixed(2)}x
+                      </span>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full bg-[var(--border-subtle)] h-2 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all duration-500 rounded-full ${
+                          subscriptionRate >= 1.0 ? 'bg-[var(--up-color)]' : 'bg-[#3b82f6]'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.max(subscriptionRate > 0 ? 5 : 0, Math.round(subscriptionRate * 100)))}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs font-mono">
                     <div className="p-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded">
                       <div className="text-[10px] text-[var(--text-muted)] uppercase">Price Band</div>
                       <div className="font-bold text-[var(--text-main)] mt-0.5">₹{price.toFixed(2)}</div>
@@ -141,7 +190,7 @@ export default function IPO() {
                     </div>
                   </div>
 
-                  <div className="mt-3 p-2.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded space-y-1.5 text-[11px] font-mono">
+                  <div className="p-2.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded space-y-1.5 text-[11px] font-mono">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] text-[var(--text-muted)] uppercase flex items-center gap-1">
                         <Clock className="w-3 h-3 text-[var(--text-muted)]" /> Opens
@@ -165,33 +214,57 @@ export default function IPO() {
 
                 <div>
                   {hasApplied ? (
-                    <div className="p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-center space-y-1">
-                      <div className="text-[10px] font-bold uppercase text-[var(--text-main)]">
-                        {ipo.status === 'allotted' || ipo.status === 'listed' ? (
-                          mySub.status === 'won' || Number(mySub.allocatedShares) > 0 ? (
-                            <span className="text-[var(--up-color)] flex items-center justify-center gap-1">
-                              <CheckCircle className="w-3 h-3" /> Allotted ({mySub.allocatedShares} shares)
-                            </span>
-                          ) : (
-                            <span className="text-[var(--down-color)]">Not Allotted (Refunded)</span>
-                          )
-                        ) : (
-                          <span className="text-[#3b82f6]">
-                            Application Active ({mySub.requestedShares || (mySub.requestedLots * lotSize)} shares)
-                          </span>
-                        )}
+                    <div className="p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded font-mono space-y-2">
+                      <div className="flex items-center justify-between text-[10px] uppercase text-[var(--text-muted)] border-b border-dashed border-[var(--border-subtle)] pb-1.5">
+                        <span>Your Application</span>
+                        <span className="text-[var(--text-main)] font-bold">{mySub.requestedLots || 1} Lot(s) ({mySub.requestedShares || (mySub.requestedLots * lotSize)} shares)</span>
                       </div>
+
+                      {ipo.status === 'allotted' || ipo.status === 'listed' ? (
+                        Number(mySub.allocatedLots) > 0 || Number(mySub.allocatedShares) > 0 ? (
+                          <div className="space-y-1">
+                            <div className="text-[11px] font-bold text-[var(--up-color)] flex items-center gap-1.5">
+                              <CheckCircle className="w-3.5 h-3.5 text-[var(--up-color)]" />
+                              <span>Allotted {mySub.allocatedLots ?? Math.floor(Number(mySub.allocatedShares) / lotSize)} of {mySub.requestedLots || 1} Lots!</span>
+                            </div>
+                            <div className="text-[10px] text-[var(--text-muted)] space-y-0.5 pl-5">
+                              <div>Shares Credited: <strong className="text-[var(--text-main)]">{mySub.allocatedShares} shares</strong></div>
+                              {Number(mySub.refundedAmount) > 0 && (
+                                <div className="text-[#3b82f6]">Refund: ₹{Number(mySub.refundedAmount).toFixed(2)} refunded to cash</div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <div className="text-[11px] font-bold text-[var(--down-color)] flex items-center gap-1.5">
+                              <X className="w-3.5 h-3.5 text-[var(--down-color)]" />
+                              <span>0 Lots Allotted</span>
+                            </div>
+                            <div className="text-[10px] text-[#3b82f6] pl-5">
+                              100% Refund: ₹{Number(mySub.refundedAmount || mySub.investedAmount || 0).toFixed(2)} credited back to Cash
+                            </div>
+                          </div>
+                        )
+                      ) : (
+                        <div className="text-[10px] text-[#3b82f6] flex items-center justify-between">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> Application Active
+                          </span>
+                          <span className="text-[var(--text-muted)] font-bold">Blocked: ₹{(Number(mySub.investedAmount) || 0).toFixed(2)}</span>
+                        </div>
+                      )}
                     </div>
                   ) : ipo.status === 'open' ? (
                     <button
                       onClick={() => { setSelectedIpo(ipo); setLotsToApply(1); }}
-                      className="w-full py-2 bg-[var(--up-color)] hover:opacity-90 text-white text-xs font-bold uppercase rounded transition-opacity"
+                      className="w-full py-2 bg-[var(--up-color)] hover:opacity-90 text-white text-xs font-bold uppercase rounded transition-opacity flex items-center justify-center gap-1.5 shadow-sm"
                     >
-                      Apply for IPO
+                      <span>Apply for IPO</span>
+                      <span className="text-[10px] opacity-80">(Random Draw)</span>
                     </button>
                   ) : (
                     <button disabled className="w-full py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-muted)] text-xs font-bold uppercase rounded opacity-50 cursor-not-allowed">
-                      {ipo.status === 'upcoming' ? 'Not Yet Open' : 'Closed'}
+                      {ipo.status === 'upcoming' ? 'Not Yet Open' : 'Bidding Closed'}
                     </button>
                   )}
                 </div>

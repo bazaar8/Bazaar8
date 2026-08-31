@@ -577,9 +577,13 @@ export default function Portfolio() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {o.taxDeducted ? (
+                          {o.taxDeducted !== undefined && Number(o.taxDeducted) > 0 ? (
                             <span className="text-amber-400 font-mono text-[10px] font-bold">
-                              ₹{o.taxDeducted.toFixed(2)}
+                              ₹{Number(o.taxDeducted).toFixed(2)}
+                            </span>
+                          ) : o.priceAtExecution && o.quantity ? (
+                            <span className="text-amber-400 font-mono text-[10px] font-bold">
+                              ₹{(Number(o.priceAtExecution) * Number(o.quantity) * 0.001).toFixed(2)}
                             </span>
                           ) : (
                             <span className="text-[var(--text-muted)] text-[10px]">—</span>

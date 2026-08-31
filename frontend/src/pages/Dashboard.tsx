@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useLivePrices } from "../hooks/useLivePrices";
 import { useUserTradingData } from "../hooks/useUserTradingData";
 import { STOCKS_CATALOG } from "../data/stocksData";
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
+import { collection, query, onSnapshot } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { 
   Flame, 
@@ -13,6 +13,7 @@ import {
   Layers, 
   Search
 } from "lucide-react";
+import DashboardWishlists from "../components/DashboardWishlists";
 
 export default function Dashboard() {
   const { prices } = useLivePrices();
@@ -23,12 +24,15 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [animatedCash, setAnimatedCash] = useState(0);
 
-  // Real-time news listener for homepage
+  // Real-time news listener for homepage - only show active or completed events (NEVER drafts)
   useEffect(() => {
-    const q = query(collection(db, "newsEvents"), orderBy("createdAt", "desc"));
+    const q = query(collection(db, "newsEvents"));
     const unsub = onSnapshot(q, (snap) => {
-      const allNews = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setNewsEvents(allNews);
+      const activeNews = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter((evt: any) => evt.status === 'active' || evt.status === 'completed')
+        .sort((a: any, b: any) => (b.startTime || b.createdAt || 0) - (a.startTime || a.createdAt || 0));
+      setNewsEvents(activeNews);
     });
     return () => unsub();
   }, []);
@@ -372,19 +376,11 @@ export default function Dashboard() {
               </div>
             ) : (
               newsEvents.map(item => {
-                const impact = item.impactDirection || "neutral";
-                const isBull = impact === "positive";
-                const isBear = impact === "negative";
-
                 return (
                   <div key={item.id} className="p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded-xl flex flex-col gap-1.5">
                     <div className="flex items-center justify-between text-[11px] font-mono">
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
-                        isBull ? "bg-[var(--up-color)]/20 text-[var(--up-color)]" :
-                        isBear ? "bg-[var(--down-color)]/20 text-[var(--down-color)]" :
-                        "bg-[var(--bg-card)] text-[var(--text-muted)]"
-                      }`}>
-                        {impact}
+                      <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-500/15 text-blue-400 border border-blue-500/20">
+                        BREAKING
                       </span>
                       <span className="text-[var(--text-muted)]">
                         {new Date(item.startTime || item.createdAt || Date.now()).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
@@ -416,6 +412,9 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {/* 3 CUSTOM TRADER WISHLISTS (At Bottom of Dashboard) */}
+      <DashboardWishlists prices={prices} />
 
     </div>
   );

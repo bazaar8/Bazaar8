@@ -18,9 +18,29 @@ export const importNewsEvents = async (events: Omit<NewsEventAdmin, "id" | "crea
   await Promise.all(promises);
 };
 
+export const createSingleNewsEvent = async (event: { headline: string; stockImpacts: Record<string, number>; durationMinutes: number }) => {
+  const createFn = httpsCallable('adminCreateSingleNews');
+  return await createFn(event);
+};
+
 export const releaseEventNow = async (eventId: string, adminData: NewsEventAdmin, durationMinutes: number) => {
   const releaseFn = httpsCallable('adminReleaseNews');
   await releaseFn({ eventId, adminData, durationMinutes });
+};
+
+export const triggerNextNewsEvent = async () => {
+  const triggerFn = httpsCallable('adminTriggerNextNews');
+  return await triggerFn({});
+};
+
+export const triggerAllNewsEvents = async () => {
+  const triggerFn = httpsCallable('adminTriggerAllNews');
+  return await triggerFn({});
+};
+
+export const deleteSingleNewsEvent = async (eventId: string) => {
+  const deleteFn = httpsCallable('adminDeleteSingleNews');
+  await deleteFn({ eventId });
 };
 
 export const pauseEvent = async (eventId: string) => {
@@ -31,4 +51,9 @@ export const pauseEvent = async (eventId: string) => {
 export const cancelEvent = async (eventId: string) => {
   const cancelFn = httpsCallable('adminCancelNews');
   await cancelFn({ eventId });
+};
+
+export const deleteAllNewsEvents = async () => {
+  const deleteFn = httpsCallable('adminDeleteAllNews');
+  await deleteFn({});
 };

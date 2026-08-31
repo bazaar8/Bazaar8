@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { NotificationProvider } from './context/NotificationContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
 import MainLayout from './layouts/MainLayout';
@@ -19,7 +20,8 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
+        <NotificationProvider>
+          <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/tv" element={<TVLeaderboard />} />
@@ -44,7 +46,8 @@ export default function App() {
           
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </BrowserRouter>
-    </AuthProvider>
-  );
+      </NotificationProvider>
+    </BrowserRouter>
+  </AuthProvider>
+);
 }

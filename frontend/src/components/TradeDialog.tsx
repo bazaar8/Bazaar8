@@ -23,7 +23,7 @@ export default function TradeDialog({
   const [quantity, setQuantity] = useState<string>("1");
   const [loading, setLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-  const [result, setResult] = useState<{ status: string; reason?: string; latencyMs?: number; roundtripMs?: number } | null>(null);
+  const [result, setResult] = useState<{ status: string; reason?: string; latencyMs?: number; roundtripMs?: number; taxDeducted?: number; realizedPnL?: number; pnlPct?: number } | null>(null);
 
   const numQty = Math.max(0, parseInt(quantity, 10) || 0);
   const estimatedTotal = numQty * currentPrice;
@@ -68,6 +68,16 @@ export default function TradeDialog({
                 <div className="text-xs font-mono text-[var(--text-muted)]">
                   {side} {numQty} {ticker} @ ₹{currentPrice.toFixed(2)}
                 </div>
+                {result.taxDeducted !== undefined && result.taxDeducted > 0 && (
+                  <div className="text-[10px] font-mono text-amber-400">
+                    0.1% STT Deducted: ₹{Number(result.taxDeducted).toFixed(2)}
+                  </div>
+                )}
+                {result.realizedPnL !== undefined && result.realizedPnL !== 0 && (
+                  <div className={`text-[11px] font-mono font-bold ${result.realizedPnL >= 0 ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
+                    Realized P&L: {result.realizedPnL >= 0 ? "+" : ""}₹{result.realizedPnL.toFixed(2)}{result.pnlPct !== undefined ? ` (${result.pnlPct >= 0 ? "+" : ""}${result.pnlPct.toFixed(2)}%)` : ""}
+                  </div>
+                )}
                 <button
                   onClick={onClose}
                   className="mt-3 px-4 py-1.5 bg-[var(--up-color)] hover:opacity-90 text-white text-xs font-bold uppercase transition-opacity rounded"
@@ -107,9 +117,19 @@ export default function TradeDialog({
                 <span className="text-[var(--text-main)]">₹{currentPrice.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-[var(--text-muted)] border-t border-[var(--border-subtle)] pt-2 mt-1">
-                <span>ESTIMATED VALUE</span>
-                <span className="text-[var(--up-color)] font-bold">
+                <span>GROSS VALUE</span>
+                <span className="text-[var(--text-main)] font-bold">
                   ₹{estimatedTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex justify-between text-amber-400 text-[10px]">
+                <span>0.1% STT</span>
+                <span>{side === "BUY" || side === "COVER" ? "+" : "-"}₹{(estimatedTotal * 0.001).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between font-bold border-t border-[var(--border-subtle)] pt-1">
+                <span>{side === "BUY" || side === "COVER" ? "TOTAL PAYABLE" : "NET PROCEEDS"}</span>
+                <span className={side === "BUY" || side === "COVER" ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
+                  ₹{((side === "BUY" || side === "COVER") ? (estimatedTotal * 1.001) : (estimatedTotal * 0.999)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </div>
@@ -237,19 +257,23 @@ export default function TradeDialog({
               />
             </div>
 
-            <div className="p-2.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded space-y-1 font-mono text-xs">
+            <div className="p-2.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded space-y-1.5 font-mono text-xs">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] text-[var(--text-muted)] uppercase">Gross Value</span>
                 <span className="text-sm font-bold text-[var(--text-main)]">
                   ₹{estimatedTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </span>
               </div>
-              {(side === "SELL" || side === "COVER") && (
-                <div className="flex items-center justify-between text-[10px] text-amber-400">
-                  <span>0.1% Securities Transaction Tax (STT):</span>
-                  <span>-₹{(estimatedTotal * 0.001).toFixed(2)}</span>
-                </div>
-              )}
+              <div className="flex items-center justify-between text-[10px] text-amber-400">
+                <span>0.1% Securities Transaction Tax (STT):</span>
+                <span>{side === "BUY" || side === "COVER" ? "+" : "-"}₹{(estimatedTotal * 0.001).toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs font-bold border-t border-[var(--border-subtle)] pt-1.5">
+                <span className="text-[var(--text-muted)]">{side === "BUY" || side === "COVER" ? "Total Payable:" : "Net Proceeds:"}</span>
+                <span className={side === "BUY" || side === "COVER" ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
+                  ₹{((side === "BUY" || side === "COVER") ? (estimatedTotal * 1.001) : (estimatedTotal * 0.999)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
             </div>
 
             <button

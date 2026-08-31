@@ -369,8 +369,20 @@ exports.adminReleaseNews = functions.https.onCall(async (data, context) => {
   await verifyAdmin(context.auth?.uid);
   const { eventId, adminData, durationMinutes } = data;
   const now = Date.now();
-  await db.collection("newsEvents").doc(eventId).update({ status: "active", startTime: now, durationMinutes: durationMinutes || 15 });
-  await rtdb.ref(`marketInfluence/${eventId}`).set({ id: eventId, impacts: adminData.stockImpacts, durationMinutes: durationMinutes || 15, startTime: now, status: "active" });
+  await db.collection("newsEvents").doc(eventId).update({ 
+    status: "active", 
+    startTime: now, 
+    firedAt: now,
+    durationMinutes: durationMinutes || 15 
+  });
+  await rtdb.ref(`marketInfluence/${eventId}`).set({ 
+    id: eventId, 
+    headline: adminData?.headline || "Breaking Market News",
+    impacts: adminData?.stockImpacts || {}, 
+    durationMinutes: durationMinutes || 15, 
+    startTime: now, 
+    status: "active" 
+  });
   return { success: true };
 });
 
@@ -386,4 +398,111 @@ exports.adminCancelNews = functions.https.onCall(async (data, context) => {
   await db.collection("newsEvents").doc(data.eventId).update({ status: "cancelled" });
   await rtdb.ref(`marketInfluence/${data.eventId}`).remove();
   return { success: true };
+});
+
+exports.adminCreateSingleNews = functions.https.onCall(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  if (!data.headline) throw new functions.https.HttpsError("invalid-argument", "Headline is required.");
+  const eventRef = db.collection("newsEvents").doc();
+  const eventData = {
+    id: eventRef.id,
+    headline: data.headline,
+    stockImpacts: data.stockImpacts || {},
+    durationMinutes: Number(data.durationMinutes) || 15,
+    status: "draft",
+    startTime: 0,
+    createdAt: Date.now()
+  };
+  await eventRef.set(eventData);
+  return { success: true, eventId: eventRef.id };
+});
+
+exports.adminDeleteSingleNews = functions.https.onCall(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  if (!data.eventId) throw new functions.https.HttpsError("invalid-argument", "eventId is required.");
+  await db.collection("newsEvents").doc(data.eventId).delete();
+  await rtdb.ref(`marketInfluence/${data.eventId}`).remove();
+  return { success: true };
+});
+
+exports.adminTriggerNextNews = functions.https.onCall(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  const snap = await db.collection("newsEvents")
+    .where("status", "==", "draft")
+    .orderBy("createdAt", "asc")
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new functions.https.HttpsError("not-found", "No draft news events in queue to trigger.");
+  }
+
+  const doc = snap.docs[0];
+  const event = doc.data();
+  const now = Date.now();
+  const duration = event.durationMinutes || 15;
+
+  await doc.ref.update({
+    status: "active",
+    startTime: now,
+    firedAt: now,
+    durationMinutes: duration
+  });
+
+  await rtdb.ref(`marketInfluence/${doc.id}`).set({
+    id: doc.id,
+    headline: event.headline || "Breaking Market News",
+    impacts: event.stockImpacts || {},
+    durationMinutes: duration,
+    startTime: now,
+    status: "active"
+  });
+
+  return { success: true, eventId: doc.id, headline: event.headline };
+});
+
+exports.adminTriggerAllNews = functions.https.onCall(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  const snap = await db.collection("newsEvents")
+    .where("status", "==", "draft")
+    .get();
+
+  if (snap.empty) {
+    throw new functions.https.HttpsError("not-found", "No draft news events in queue to trigger.");
+  }
+
+  const now = Date.now();
+  for (const doc of snap.docs) {
+    const event = doc.data();
+    const duration = event.durationMinutes || 15;
+    await doc.ref.update({
+      status: "active",
+      startTime: now,
+      firedAt: now,
+      durationMinutes: duration
+    });
+    await rtdb.ref(`marketInfluence/${doc.id}`).set({
+      id: doc.id,
+      headline: event.headline || "Breaking Market News",
+      impacts: event.stockImpacts || {},
+      durationMinutes: duration,
+      startTime: now,
+      status: "active"
+    });
+  }
+
+  return { success: true, count: snap.size };
+});
+
+exports.adminDeleteAllNews = functions.https.onCall(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  const snap = await db.collection("newsEvents").get();
+  const batchSize = 500;
+  for (let i = 0; i < snap.docs.length; i += batchSize) {
+    const batch = db.batch();
+    snap.docs.slice(i, i + batchSize).forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+  }
+  await rtdb.ref("marketInfluence").remove();
+  return { success: true, deletedCount: snap.size };
 });

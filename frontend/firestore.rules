@@ -51,6 +51,11 @@ service cloud.firestore {
     match /ipos/{ipoId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
+
+      match /subscriptions/{subId} {
+        allow read: if isAuthenticated() && (request.auth.uid == subId || isAdmin());
+        allow write: if isAdmin();
+      }
     }
 
     match /leaderboard/{docId} {

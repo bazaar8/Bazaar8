@@ -3,9 +3,11 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../hooks/useTheme';
 import { useLivePrices } from '../hooks/useLivePrices';
-import { LogOut, Bell, Sun, Moon, User, X, Newspaper, Menu } from 'lucide-react';
-import { collection, query, limit, onSnapshot, orderBy, doc } from 'firebase/firestore';
+import { LogOut, Bell, Sun, Moon, User, X, Newspaper, Menu, Volume2, VolumeX, CheckCheck, Trash2, TrendingUp, TrendingDown, Rocket, Sparkles } from 'lucide-react';
+import { collection, query, onSnapshot, doc } from 'firebase/firestore';
+import { getDatabase, ref as rtdbRef, onValue } from 'firebase/database';
 import { db } from '../config/firebase';
+import { useNotifications } from '../context/NotificationContext';
 import logoUrl from '../assets/logo.png';
 
 export default function MainLayout() {
@@ -14,16 +16,24 @@ export default function MainLayout() {
   const location = useLocation();
   const { isDark, toggleTheme } = useTheme();
   const { marketStatus } = useLivePrices();
+  const { 
+    notifications, 
+    unreadCount, 
+    soundEnabled, 
+    setSoundEnabled, 
+    notify, 
+    markAsRead, 
+    markAllAsRead, 
+    clearNotifications 
+  } = useNotifications();
   
-  const [activeNews, setActiveNews] = useState<any | null>(null);
-  const [showNotification, setShowNotification] = useState(false);
   const [isFrozen, setIsFrozen] = useState(false);
   const [isAppReady, setIsAppReady] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAlertsOpen, setIsAlertsOpen] = useState(false);
-  const [alertsList, setAlertsList] = useState<any[]>([]);
+  const [notificationFilter, setNotificationFilter] = useState<'all' | 'unread'>('all');
   const alertsRef = useRef<HTMLDivElement>(null);
-  const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenNewsRef = useRef<Set<string>>(new Set());
 
   // Close alerts dropdown on outside click
   useEffect(() => {
@@ -65,45 +75,64 @@ export default function MainLayout() {
     }
   }, [marketStatus, profile, location.pathname, navigate, isAppReady]);
 
+  // Real-time news catalyst listener - triggers notification STRICTLY when news is fired
   useEffect(() => {
     if (!user) return;
 
-    const q = query(collection(db, "newsEvents"), orderBy("createdAt", "desc"), limit(5));
-    
-    const unsub = onSnapshot(q, (snap) => {
-      if (!snap.empty) {
-        const firedEvents = snap.docs
-          .map(doc => doc.data())
-          .filter(news => news && typeof news.startTime === 'number' && news.startTime > 0)
-          .sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
-          
-        setAlertsList(firedEvents);
-        if (firedEvents.length > 0) {
-          const newestNews = firedEvents[0];
-          const timeSinceFired = Date.now() - (newestNews.startTime || Date.now());
-          const isRecent = timeSinceFired < 30000;
+    // 1. Listen to Realtime Database marketInfluence (instantaneous sub-10ms trigger when fired)
+    const rtdb = getDatabase();
+    const influenceRef = rtdbRef(rtdb, "marketInfluence");
 
-          if (isRecent) {
-            setActiveNews(newestNews);
-            setShowNotification(true);
-            
-            if (notificationTimer.current) clearTimeout(notificationTimer.current);
-            const timeLeft = Math.max(0, 30000 - timeSinceFired);
-            notificationTimer.current = setTimeout(() => {
-              setShowNotification(false);
-            }, timeLeft);
-          } else {
-            setShowNotification(false);
+    const unsubRTDB = onValue(influenceRef, (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      Object.entries(data).forEach(([eventId, item]: [string, any]) => {
+        if (item && item.status === 'active') {
+          const startTime = Number(item.startTime) || 0;
+          const timeSinceFired = Date.now() - startTime;
+
+          // Alert if fired within the last 2 minutes and not yet seen
+          if (timeSinceFired < 120000 && !seenNewsRef.current.has(eventId)) {
+            seenNewsRef.current.add(eventId);
+            notify({
+              type: "news",
+              title: item.headline || "Breaking Market News",
+              message: item.headline || "Breaking Market News",
+              link: "/news"
+            });
           }
         }
-      }
+      });
+    });
+
+    // 2. Firestore fallback listener for active news status changes
+    const q = query(collection(db, "newsEvents"));
+    const unsubFirestore = onSnapshot(q, (snap) => {
+      snap.docChanges().forEach((change) => {
+        const item = change.doc.data() as any;
+        if (item && item.status === 'active') {
+          const startTime = Number(item.startTime || item.firedAt) || 0;
+          const timeSinceFired = Date.now() - startTime;
+
+          if (startTime > 0 && timeSinceFired < 120000 && !seenNewsRef.current.has(change.doc.id)) {
+            seenNewsRef.current.add(change.doc.id);
+            notify({
+              type: "news",
+              title: item.headline,
+              message: item.headline,
+              link: "/news"
+            });
+          }
+        }
+      });
     });
 
     return () => {
-      unsub();
-      if (notificationTimer.current) clearTimeout(notificationTimer.current);
+      unsubRTDB();
+      unsubFirestore();
     };
-  }, [user]);
+  }, [user, notify]);
 
   const navLinks = [
     { path: '/', label: 'Dashboard' },
@@ -168,85 +197,185 @@ export default function MainLayout() {
                 <button 
                   onClick={() => setIsAlertsOpen(prev => !prev)}
                   className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors rounded-full hover:bg-[var(--bg-root)] relative"
-                  title="Market Alerts"
+                  title="Notifications & Alerts"
                 >
                   <Bell className="w-5 h-5" />
-                  {alertsList.length > 0 && (
-                    <span className="absolute top-1 right-1 w-2 h-2 bg-[var(--down-color)] rounded-full border border-[var(--bg-card)]"></span>
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-[var(--down-color)] text-white font-mono font-bold text-[9px] rounded-full min-w-[16px] text-center shadow">
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </span>
                   )}
                 </button>
 
                 {/* Alerts Dropdown Popover */}
                 {isAlertsOpen && (
-                  <div className="absolute right-0 top-12 w-80 sm:w-96 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute right-0 top-12 w-80 sm:w-96 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 font-mono">
+                    
+                    {/* Header */}
                     <div className="p-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between bg-[var(--bg-root)]">
                       <div className="flex items-center gap-2">
-                        <Bell className="w-4 h-4 text-[var(--up-color)]" />
-                        <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-main)]">
-                          Exchange Alerts ({alertsList.length})
-                        </span>
+                        <div className="w-6 h-6 rounded-lg bg-[var(--up-color)]/10 text-[var(--up-color)] flex items-center justify-center">
+                          <Bell className="w-3.5 h-3.5" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-main)] block">
+                            Notifications
+                          </span>
+                          <span className="text-[10px] text-[var(--text-muted)]">
+                            {unreadCount} unread • {notifications.length} total
+                          </span>
+                        </div>
                       </div>
-                      <button 
-                        onClick={() => setIsAlertsOpen(false)}
-                        className="text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
+
+                      <div className="flex items-center gap-1 text-[var(--text-muted)]">
+                        {/* Sound Toggle */}
+                        <button
+                          onClick={() => setSoundEnabled(!soundEnabled)}
+                          className={`p-1.5 rounded-lg hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] transition-colors ${
+                            soundEnabled ? "text-[var(--up-color)]" : "text-[var(--text-muted)] opacity-60"
+                          }`}
+                          title={soundEnabled ? "Mute alert chime" : "Enable alert chime"}
+                        >
+                          {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                        </button>
+
+                        {/* Mark All Read */}
+                        {unreadCount > 0 && (
+                          <button
+                            onClick={markAllAsRead}
+                            className="p-1.5 rounded-lg hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] transition-colors text-[var(--up-color)]"
+                            title="Mark all as read"
+                          >
+                            <CheckCheck className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        {/* Clear All */}
+                        {notifications.length > 0 && (
+                          <button
+                            onClick={clearNotifications}
+                            className="p-1.5 rounded-lg hover:text-[var(--down-color)] hover:bg-[var(--bg-card)] transition-colors"
+                            title="Clear all notifications"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        <button 
+                          onClick={() => setIsAlertsOpen(false)}
+                          className="p-1.5 rounded-lg hover:text-[var(--text-main)] transition-colors ml-1"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="max-h-80 overflow-y-auto divide-y divide-[var(--border-subtle)]">
-                      {/* Market State Notice */}
-                      <div className="p-3 bg-[var(--bg-card)] flex items-start gap-2.5">
-                        <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
-                          marketStatus === "OPEN" ? "bg-[var(--up-color)] animate-ping" : "bg-[var(--down-color)]"
-                        }`} />
-                        <div>
-                          <div className="text-[11px] font-bold text-[var(--text-main)] font-mono">
-                            MARKET SESSION: {marketStatus}
-                          </div>
-                          <div className="text-[10px] text-[var(--text-muted)] font-mono">
-                            {marketStatus === "OPEN" ? "Real-time trading engine is currently matching orders." : "Trading session is currently inactive."}
-                          </div>
-                        </div>
+                    {/* Filter Tabs */}
+                    <div className="px-3 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-card)] flex items-center justify-between text-[10px]">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setNotificationFilter('all')}
+                          className={`px-2 py-0.5 rounded ${notificationFilter === 'all' ? 'bg-[var(--bg-root)] text-[var(--text-main)] font-bold' : 'text-[var(--text-muted)]'}`}
+                        >
+                          All ({notifications.length})
+                        </button>
+                        <button
+                          onClick={() => setNotificationFilter('unread')}
+                          className={`px-2 py-0.5 rounded ${notificationFilter === 'unread' ? 'bg-[var(--bg-root)] text-[var(--text-main)] font-bold' : 'text-[var(--text-muted)]'}`}
+                        >
+                          Unread ({unreadCount})
+                        </button>
                       </div>
 
-                      {/* News / Catalysts Alerts */}
-                      {alertsList.length === 0 ? (
-                        <div className="p-6 text-center text-xs font-mono text-[var(--text-muted)]">
-                          No recent broadcast alerts.
+                      {/* Live Market State Pill */}
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase flex items-center gap-1 ${
+                        marketStatus === 'OPEN' ? 'bg-[var(--up-color)]/15 text-[var(--up-color)]' : 'bg-[var(--down-color)]/15 text-[var(--down-color)]'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${marketStatus === 'OPEN' ? 'bg-[var(--up-color)] animate-ping' : 'bg-[var(--down-color)]'}`} />
+                        {marketStatus}
+                      </span>
+                    </div>
+
+                    {/* Notification List */}
+                    <div className="max-h-80 overflow-y-auto divide-y divide-[var(--border-subtle)]">
+                      {(notificationFilter === 'unread' ? notifications.filter(n => !n.read) : notifications).length === 0 ? (
+                        <div className="py-10 px-4 text-center">
+                          <div className="w-8 h-8 rounded-full bg-[var(--bg-root)] border border-[var(--border-subtle)] flex items-center justify-center mx-auto mb-2 text-[var(--text-muted)]">
+                            <Bell className="w-4 h-4 opacity-40" />
+                          </div>
+                          <p className="text-xs font-bold text-[var(--text-main)]">All caught up!</p>
+                          <p className="text-[10px] text-[var(--text-muted)] mt-0.5">No {notificationFilter === 'unread' ? 'unread' : ''} notifications at this time.</p>
                         </div>
                       ) : (
-                        alertsList.map((item, idx) => {
-                          const impact = item.impactDirection || "neutral";
-                          const isBull = impact === "positive";
-                          const isBear = impact === "negative";
+                        (notificationFilter === 'unread' ? notifications.filter(n => !n.read) : notifications).map(item => {
+                          const isBull = item.impact === "positive";
+                          const isBear = item.impact === "negative";
+                          const timeAgo = Math.floor((Date.now() - item.timestamp) / 1000);
+                          const formattedTime = timeAgo < 60 ? "Just now" : timeAgo < 3600 ? `${Math.floor(timeAgo / 60)}m ago` : `${Math.floor(timeAgo / 3600)}h ago`;
 
                           return (
-                            <div key={item.id || idx} className="p-3 hover:bg-[var(--bg-root)] transition-colors">
-                              <div className="flex items-center justify-between gap-2 mb-1">
-                                <span className={`text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded border ${
-                                  isBull ? "bg-[#089981]/15 text-[var(--up-color)] border-[#089981]/30" :
-                                  isBear ? "bg-[#f23645]/15 text-[var(--down-color)] border-[#f23645]/30" :
-                                  "bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border-subtle)]"
-                                }`}>
-                                  {impact}
-                                </span>
-                                <span className="text-[9px] font-mono text-[var(--text-muted)]">
-                                  {new Date(item.startTime || item.createdAt || Date.now()).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' })}
-                                </span>
+                            <div 
+                              key={item.id} 
+                              onClick={() => markAsRead(item.id)}
+                              className={`p-3.5 hover:bg-[var(--bg-root)] transition-colors cursor-pointer relative flex items-start gap-3 ${
+                                !item.read ? "bg-amber-400/5" : ""
+                              }`}
+                            >
+                              {/* Icon Badge */}
+                              <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                                item.type === "ipo" ? "bg-amber-400/15 text-amber-400" :
+                                isBull ? "bg-[var(--up-color)]/15 text-[var(--up-color)]" :
+                                isBear ? "bg-[var(--down-color)]/15 text-[var(--down-color)]" :
+                                "bg-blue-500/15 text-blue-400"
+                              }`}>
+                                {item.type === "ipo" ? <Rocket className="w-3.5 h-3.5" /> :
+                                 isBull ? <TrendingUp className="w-3.5 h-3.5" /> :
+                                 isBear ? <TrendingDown className="w-3.5 h-3.5" /> :
+                                 <Sparkles className="w-3.5 h-3.5" />}
                               </div>
-                              <p className="text-xs font-medium text-[var(--text-main)] leading-snug">
-                                {item.headline}
-                              </p>
-                              {item.targetTickers && item.targetTickers.length > 0 && (
-                                <div className="flex gap-1 mt-1.5">
-                                  {item.targetTickers.map((t: string) => (
-                                    <span key={t} className="text-[9px] font-mono text-[var(--text-muted)] bg-[var(--bg-root)] px-1.5 py-0.5 rounded border border-[var(--border-subtle)]">
-                                      ${t}
+
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-1 mb-1">
+                                  <span className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded border ${
+                                    isBull ? "bg-[var(--up-color)]/15 text-[var(--up-color)] border-[var(--up-color)]/30" :
+                                    isBear ? "bg-[var(--down-color)]/15 text-[var(--down-color)] border-[var(--down-color)]/30" :
+                                    item.type === "ipo" ? "bg-amber-400/15 text-amber-400 border-amber-400/30" :
+                                    "bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border-subtle)]"
+                                  }`}>
+                                    {item.type}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[9px] text-[var(--text-muted)]">
+                                      {formattedTime}
                                     </span>
-                                  ))}
+                                    {!item.read && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                    )}
+                                  </div>
                                 </div>
-                              )}
+
+                                <p className="text-xs font-bold text-[var(--text-main)] leading-snug font-sans">
+                                  {item.title}
+                                </p>
+                                <p className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-relaxed font-sans">
+                                  {item.message}
+                                </p>
+
+                                {item.tickers && item.tickers.length > 0 && (
+                                  <div className="flex gap-1 mt-1.5">
+                                    {item.tickers.map((t: string) => (
+                                      <Link
+                                        key={t}
+                                        to={`/stocks/${t}`}
+                                        onClick={(e) => { e.stopPropagation(); setIsAlertsOpen(false); }}
+                                        className="text-[9px] text-[var(--text-muted)] hover:text-amber-400 bg-[var(--bg-root)] px-1.5 py-0.5 rounded border border-[var(--border-subtle)] hover:border-amber-400/40 transition-colors"
+                                      >
+                                        ${t}
+                                      </Link>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           );
                         })
@@ -257,10 +386,10 @@ export default function MainLayout() {
                       <Link 
                         to="/" 
                         onClick={() => setIsAlertsOpen(false)}
-                        className="text-[11px] font-mono font-bold text-[var(--up-color)] hover:underline inline-flex items-center gap-1"
+                        className="text-[11px] font-bold text-[var(--up-color)] hover:underline inline-flex items-center gap-1"
                       >
                         <Newspaper className="w-3.5 h-3.5" />
-                        View Live News on Dashboard
+                        View Live News Catalysts on Dashboard
                       </Link>
                     </div>
                   </div>
@@ -334,22 +463,6 @@ export default function MainLayout() {
         <Outlet />
       </main>
 
-      {showNotification && activeNews && !isBlocked && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#3b82f6] text-white p-4 rounded-lg shadow-2xl flex items-start gap-4 max-w-sm border border-blue-400 animate-bounce">
-          <div className="bg-white/20 p-2 rounded-full animate-pulse flex-shrink-0">
-            <Newspaper className="w-5 h-5 text-white" />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center justify-between mb-1">
-              <h4 className="font-bold text-xs uppercase tracking-wider text-blue-100">Breaking News</h4>
-              <button onClick={() => setShowNotification(false)} className="text-blue-200 hover:text-white transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-sm font-medium leading-snug">{activeNews.headline}</p>
-          </div>
-        </div>
-      )}
 
       {isBlocked && (
         <div className="fixed inset-0 z-[9999] bg-[var(--bg-root)] flex flex-col items-center justify-center p-6 text-center">

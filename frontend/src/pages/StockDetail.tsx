@@ -5,8 +5,8 @@ import { useUserTradingData } from "../hooks/useUserTradingData";
 import { STOCKS_CATALOG } from "../data/stocksData";
 import CustomCandleChart from "../components/CustomCandleChart";
 import { executeTrade } from "../services/tradeService";
-import { ArrowLeft, TrendingUp, TrendingDown, CheckCircle2, AlertCircle, Zap, ShieldCheck } from "lucide-react";
-
+import { ArrowLeft, TrendingUp, TrendingDown, CheckCircle2, AlertCircle, Zap } from "lucide-react";
+import AddToWishlistButton from "../components/AddToWishlistButton";
 export default function StockDetail() {
   const { ticker } = useParams<{ ticker: string }>();
   const { prices, marketStatus } = useLivePrices();
@@ -40,8 +40,8 @@ export default function StockDetail() {
 
   const numQty = Math.max(0, parseInt(quantity, 10) || 0);
   const estimatedTotal = numQty * livePrice;
-  const estimatedTax = (side === "SELL" || side === "COVER") ? estimatedTotal * 0.001 : 0;
-  const netProceeds = side === "SELL" ? estimatedTotal - estimatedTax : estimatedTotal + estimatedTax;
+  const estimatedTax = estimatedTotal * 0.001;
+  const netProceeds = (side === "SELL" || side === "SHORT") ? estimatedTotal - estimatedTax : estimatedTotal + estimatedTax;
 
   const handleAction = async () => {
     if (numQty <= 0) return;
@@ -51,7 +51,9 @@ export default function StockDetail() {
     try {
       const res: any = await executeTrade(stockMeta.ticker, side, numQty);
       setResult(res);
-      if (res.status === "completed") setQuantity("1");
+      if (res.status === "completed") {
+        setQuantity("1");
+      }
     } catch (err: any) {
       setResult({ status: "rejected", reason: err.message || "Execution rejected by market engine" });
     } finally {
@@ -65,11 +67,12 @@ export default function StockDetail() {
     if (!longPosition || longPosition.quantity <= 0) return;
     setSide("SELL");
     setQuantity(String(longPosition.quantity));
+    const qtyToSell = longPosition.quantity;
     setLoading(true);
     setResult(null);
 
     try {
-      const res: any = await executeTrade(stockMeta.ticker, "SELL", longPosition.quantity);
+      const res: any = await executeTrade(stockMeta.ticker, "SELL", qtyToSell);
       setResult(res);
       setQuantity("1");
     } catch (err: any) {
@@ -91,20 +94,17 @@ export default function StockDetail() {
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>Stock Directory</span>
         </Link>
-        <div className="flex items-center gap-2 text-[10px] font-mono text-[var(--text-muted)]">
-          <span className="w-2 h-2 rounded-full bg-[var(--up-color)] animate-ping" />
-          <span>SIMULATION: 1.2S • {marketStatus}</span>
-        </div>
       </div>
 
       {/* Main Stock Banner with Highest Value */}
       <div className="terminal-card p-4 md:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold text-[var(--text-main)] tracking-tight">{stockMeta.ticker}</h1>
             <span className="text-[10px] px-2 py-0.5 bg-[var(--bg-root)] text-[var(--text-muted)] border border-[var(--border-subtle)] uppercase font-mono rounded">
               {stockMeta.sector}
             </span>
+            <AddToWishlistButton ticker={stockMeta.ticker} />
           </div>
           <p className="text-sm text-[var(--text-muted)] mt-1">{stockMeta.name}</p>
         </div>
@@ -270,16 +270,14 @@ export default function StockDetail() {
                   </span>
                 </div>
 
-                {(side === "SELL" || side === "COVER") && (
-                  <div className="flex justify-between text-amber-400">
-                    <span>0.1% Securities Transaction Tax (STT):</span>
-                    <span>-₹{estimatedTax.toFixed(2)}</span>
-                  </div>
-                )}
+                <div className="flex justify-between text-amber-400">
+                  <span>0.1% Securities Transaction Tax (STT):</span>
+                  <span>{side === "BUY" || side === "COVER" ? "+" : "-"}₹{estimatedTax.toFixed(2)}</span>
+                </div>
 
                 <div className="flex justify-between border-t border-[var(--border-subtle)] pt-1.5 font-bold">
                   <span className="text-[var(--text-muted)]">
-                    {side === "SELL" ? "Net Proceeds:" : "Total Cost:"}
+                    {side === "SELL" || side === "SHORT" ? "Net Proceeds:" : "Total Cost:"}
                   </span>
                   <span className={side === "BUY" || side === "COVER" ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
                     ₹{netProceeds.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -337,11 +335,6 @@ export default function StockDetail() {
                   </>
                 )}
               </button>
-
-              <div className="text-[10px] text-[var(--text-muted)] font-mono text-center flex items-center justify-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-[var(--up-color)]" />
-                <span>Ultra-Low 1ms Latency Institutional Execution</span>
-              </div>
             </div>
           </div>
         </div>

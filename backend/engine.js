@@ -4,10 +4,74 @@ const { getDatabase } = require("firebase-admin/database");
 const { getAuth } = require("firebase-admin/auth");
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
 
-const serviceAccount = process.env.SERVICE_ACCOUNT_JSON
-  ? JSON.parse(process.env.SERVICE_ACCOUNT_JSON)
-  : require("./serviceAccountKey.json");
+const fs = require("fs");
+const path = require("path");
+
+function getServiceAccount() {
+  if (process.env.SERVICE_ACCOUNT_JSON) {
+    try {
+      return JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
+    } catch (e) {
+      try {
+        const decoded = Buffer.from(process.env.SERVICE_ACCOUNT_JSON, "base64").toString("utf8");
+        return JSON.parse(decoded);
+      } catch (err) {
+        console.error("❌ Failed to parse SERVICE_ACCOUNT_JSON env var:", err.message);
+      }
+    }
+  }
+
+  const candidatePaths = [
+    process.env.SERVICE_ACCOUNT_KEY_PATH,
+    "/etc/secrets/serviceAccountKey.json",
+    path.join(__dirname, "serviceAccountKey.json"),
+    path.join(process.cwd(), "serviceAccountKey.json"),
+    path.join(__dirname, "../serviceAccountKey.json"),
+    path.join(process.cwd(), "../serviceAccountKey.json")
+  ].filter(Boolean);
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      try {
+        const data = fs.readFileSync(candidate, "utf8");
+        console.log(`✅ Loaded Firebase service account from: ${candidate}`);
+        return JSON.parse(data);
+      } catch (err) {
+        console.error(`❌ Found ${candidate} but failed to parse:`, err.message);
+      }
+    }
+  }
+
+  if (fs.existsSync("/etc/secrets")) {
+    try {
+      const files = fs.readdirSync("/etc/secrets");
+      for (const file of files) {
+        if (file.endsWith(".json")) {
+          const fullPath = path.join("/etc/secrets", file);
+          const data = fs.readFileSync(fullPath, "utf8");
+          console.log(`✅ Loaded Firebase service account from: ${fullPath}`);
+          return JSON.parse(data);
+        }
+      }
+    } catch (e) {}
+  }
+
+  return null;
+}
+
+const serviceAccount = getServiceAccount();
+
+if (!serviceAccount) {
+  console.error("=================================================================");
+  console.error("❌ CRITICAL ERROR: Firebase service account credentials not found!");
+  console.error("To fix this in Render dashboard:");
+  console.error("Option A (Environment Variable): Add 'SERVICE_ACCOUNT_JSON' with your serviceAccount JSON");
+  console.error("Option B (Secret File): Add secret file 'serviceAccountKey.json' with your serviceAccount JSON");
+  console.error("=================================================================");
+  process.exit(1);
+}
 
 initializeApp({
   credential: cert(serviceAccount),
@@ -20,14 +84,39 @@ const authAdmin = getAuth();
 let tickCount = 0;
 let forceBasePriceReset = false;
 
+// In-memory zero-latency cache
+let currentMarketStatus = "CLOSED";
+let cachedLivePrices = {};
+let cachedInfluences = {};
+
+dbRTDB.ref("marketStatus/state").on("value", (snap) => {
+  currentMarketStatus = snap.val() || "CLOSED";
+});
+
+dbRTDB.ref("livePrices").on("value", (snap) => {
+  if (snap.exists()) {
+    cachedLivePrices = snap.val() || {};
+  }
+});
+
+dbRTDB.ref("marketInfluence").on("value", (snap) => {
+  if (snap.exists()) {
+    cachedInfluences = snap.val() || {};
+  } else {
+    cachedInfluences = {};
+  }
+});
+
 async function runIPOAutomator() {
-  console.log("🚀 Auto-IPO Engine active...");
+  console.log("🚀 Auto-IPO Engine active (Randomized Lottery & Real-time Subscription Tracking)...");
   setInterval(async () => {
     try {
       const now = Date.now();
       const iposSnap = await dbFirestore.collection('ipos').get();
       for (const doc of iposSnap.docs) {
         const ipo = { id: doc.id, ...doc.data() };
+
+        // 1. Auto-open upcoming IPOs when openTime arrives
         if (ipo.status === "upcoming" && ipo.openTime && now >= ipo.openTime) {
           await dbFirestore.collection("ipos").doc(ipo.id).update({ status: "open" });
           await dbFirestore.collection("newsEvents").add({
@@ -40,41 +129,153 @@ async function runIPOAutomator() {
             impactDirection: "positive"
           });
         }
-        if ((ipo.status === "open" && ipo.closeTime && now >= ipo.closeTime) || (ipo.triggerAllotment)) {
+
+        // 2. Real-time Subscription Sync (Tracks exact lots, shares, and X.XXx rate)
+        if (ipo.status === "upcoming" || ipo.status === "open" || ipo.status === "closed") {
+          try {
+            const subsSnap = await dbFirestore.collection("ipos").doc(ipo.id).collection("subscriptions").get();
+            let liveLots = 0;
+            let liveShares = 0;
+            const lotSize = Number(ipo.lotSize) || 1;
+            subsSnap.docs.forEach(s => {
+              const d = s.data();
+              const rl = Number(d.requestedLots) || Math.max(1, Math.floor((Number(d.requestedShares) || 1) / lotSize));
+              liveLots += rl;
+              liveShares += (rl * lotSize);
+            });
+            const totalOffered = Number(ipo.totalLots) || 1;
+            const liveRate = Number((liveLots / totalOffered).toFixed(2));
+            const liveCount = subsSnap.docs.length;
+
+            if (ipo.totalSubscribedLots !== liveLots || ipo.subscriptionRate !== liveRate || ipo.subscriptionCount !== liveCount) {
+              await dbFirestore.collection("ipos").doc(ipo.id).update({
+                totalSubscribedLots: liveLots,
+                totalSubscribedShares: liveShares,
+                subscriptionCount: liveCount,
+                subscriptionRate: liveRate
+              });
+            }
+          } catch (err) {}
+        }
+
+        // 3. True Randomized Lottery Allotment Trigger
+        const shouldAllot = ipo.triggerAllotment || 
+          ((ipo.status === "open" || ipo.status === "closed") && ipo.closeTime && now >= ipo.closeTime);
+
+        if (shouldAllot && ipo.status !== "allotted" && ipo.status !== "listed") {
           const subsSnap = await dbFirestore.collection("ipos").doc(ipo.id).collection("subscriptions").get();
-          const availableLots = Number(ipo.totalLots) || 0;
+          const availableLots = Number(ipo.totalLots) || 1;
           const lotSize = Number(ipo.lotSize) || 1;
           const pricePerShare = Number(ipo.price) || 0;
-          let lotteryPool = [];
+
+          if (subsSnap.empty) {
+            await dbFirestore.collection("ipos").doc(ipo.id).update({
+              status: "allotted",
+              triggerAllotment: FieldValue.delete(),
+              totalSubscribedLots: 0,
+              subscriptionRate: 0
+            });
+            continue;
+          }
+
+          const applicants = [];
+          let totalReqLots = 0;
           subsSnap.docs.forEach(subDoc => {
             const sub = subDoc.data();
-            const reqLots = sub.requestedLots || Math.max(1, Math.floor((sub.requestedShares || 1) / lotSize));
-            for (let i = 0; i < reqLots; i++) lotteryPool.push({ subId: subDoc.id, uid: sub.uid });
+            const reqLots = Number(sub.requestedLots) || Math.max(1, Math.floor((Number(sub.requestedShares) || 1) / lotSize));
+            totalReqLots += reqLots;
+            applicants.push({
+              subId: subDoc.id,
+              docRef: subDoc.ref,
+              uid: sub.uid,
+              requestedLots: reqLots,
+              investedAmount: Number(sub.investedAmount) || (reqLots * lotSize * pricePerShare)
+            });
           });
-          for (let i = lotteryPool.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [lotteryPool[i], lotteryPool[j]] = [lotteryPool[j], lotteryPool[i]];
+
+          const subRate = Number((totalReqLots / availableLots).toFixed(2));
+
+          // BUILD CRYPTO-RANDOMIZED LOTTERY TICKET POOL (1 ticket per requested lot)
+          let lotteryPool = [];
+          applicants.forEach(app => {
+            for (let i = 0; i < app.requestedLots; i++) {
+              lotteryPool.push({ subId: app.subId, uid: app.uid });
+            }
+          });
+
+          // Multi-pass cryptographic shuffle (guarantees non-deterministic lottery)
+          for (let pass = 0; pass < 3; pass++) {
+            for (let i = lotteryPool.length - 1; i > 0; i--) {
+              const j = crypto.randomInt(0, i + 1);
+              [lotteryPool[i], lotteryPool[j]] = [lotteryPool[j], lotteryPool[i]];
+            }
           }
-          const winningTickets = lotteryPool.slice(0, availableLots);
-          const winCountsBySub = {};
-          winningTickets.forEach(ticket => winCountsBySub[ticket.subId] = (winCountsBySub[ticket.subId] || 0) + 1);
+
+          // Determine winning lots to award:
+          // In over-subscription: award exactly availableLots
+          // In under-subscription or testing: randomize allotment so any bidder can get any number of lots (not fixed 100%)
+          let lotsToAward;
+          if (totalReqLots > availableLots) {
+            lotsToAward = availableLots;
+          } else {
+            const randomRatio = 0.40 + (crypto.randomInt(0, 50) / 100); // 40% to 89%
+            lotsToAward = Math.max(1, Math.min(totalReqLots, Math.round(totalReqLots * randomRatio)));
+          }
+
+          const winningTickets = lotteryPool.slice(0, lotsToAward);
+          const winCounts = {};
+          winningTickets.forEach(ticket => {
+            winCounts[ticket.subId] = (winCounts[ticket.subId] || 0) + 1;
+          });
+
           const batch = dbFirestore.batch();
-          for (const subDoc of subsSnap.docs) {
-            const sub = subDoc.data();
-            const reqLots = sub.requestedLots || Math.max(1, Math.floor((sub.requestedShares || 1) / lotSize));
-            const costBlocked = sub.investedAmount || (reqLots * (lotSize * pricePerShare));
-            const wonLots = winCountsBySub[subDoc.id] || 0;
+          for (const app of applicants) {
+            const wonLots = winCounts[app.subId] || 0;
             const allocatedShares = wonLots * lotSize;
-            const refundAmount = costBlocked - (allocatedShares * pricePerShare);
-            batch.update(subDoc.ref, { allocatedLots: wonLots, allocatedShares, status: wonLots > 0 ? "won" : "lost", refundedAmount: refundAmount });
-            if (refundAmount > 0) batch.update(dbFirestore.collection("users").doc(sub.uid), { cashBalance: FieldValue.increment(refundAmount) });
-            if (allocatedShares > 0) batch.set(dbFirestore.collection("users").doc(sub.uid).collection("holdings").doc(`${ipo.ticker}_long`), { ticker: ipo.ticker, positionType: "long", quantity: FieldValue.increment(allocatedShares), avgPrice: pricePerShare }, { merge: true });
+            const costBlocked = app.investedAmount;
+            const costUsed = allocatedShares * pricePerShare;
+            const refundAmount = Math.max(0, costBlocked - costUsed);
+
+            batch.update(app.docRef, {
+              allocatedLots: wonLots,
+              allocatedShares: allocatedShares,
+              status: wonLots > 0 ? "won" : "lost",
+              refundedAmount: refundAmount,
+              allotmentTimestamp: now
+            });
+
+            if (refundAmount > 0) {
+              batch.update(dbFirestore.collection("users").doc(app.uid), {
+                cashBalance: FieldValue.increment(refundAmount)
+              });
+            }
+
+            if (allocatedShares > 0) {
+              batch.set(
+                dbFirestore.collection("users").doc(app.uid).collection("holdings").doc(`${ipo.ticker}_long`),
+                {
+                  ticker: ipo.ticker,
+                  positionType: "long",
+                  quantity: FieldValue.increment(allocatedShares),
+                  avgPrice: pricePerShare
+                },
+                { merge: true }
+              );
+            }
           }
-          batch.update(dbFirestore.collection("ipos").doc(ipo.id), { status: "allotted", triggerAllotment: FieldValue.delete() });
+
+          batch.update(dbFirestore.collection("ipos").doc(ipo.id), {
+            status: "allotted",
+            triggerAllotment: FieldValue.delete(),
+            totalSubscribedLots: totalReqLots,
+            subscriptionRate: subRate,
+            allotmentCompletedAt: now
+          });
+
           await batch.commit();
 
           await dbFirestore.collection("newsEvents").add({
-            headline: `🎉 IPO Allotment Out: Allotment for ${ipo.ticker} (${ipo.name || ipo.ticker}) is complete! Check your portfolio for allocated shares.`,
+            headline: `🎉 IPO Allotment Out: ${ipo.ticker} (${ipo.name || ipo.ticker}) was subscribed ${subRate}x! Lottery draw complete—shares & refunds credited.`,
             status: "active",
             startTime: now,
             createdAt: now,
@@ -83,6 +284,8 @@ async function runIPOAutomator() {
             impactDirection: "positive"
           });
         }
+
+        // 4. Listing trigger
         if ((ipo.status === "allotted" && ipo.listTime && now >= ipo.listTime) || (ipo.triggerListing)) {
           const listingPrice = Number(ipo.price) * (1 + ((Number(ipo.listingPremiumPct) || 0) / 100));
           await dbFirestore.collection("ipos").doc(ipo.id).update({ status: "listed", triggerListing: FieldValue.delete() });
@@ -99,8 +302,10 @@ async function runIPOAutomator() {
           });
         }
       }
-    } catch (e) { }
-  }, 5000);
+    } catch (e) {
+      console.error("Auto-IPO Engine Error:", e.message);
+    }
+  }, 2000);
 }
 
 async function runLeaderboardEngine() {
@@ -123,8 +328,7 @@ async function runLeaderboardEngine() {
   });
   setInterval(async () => {
     try {
-      const pricesSnap = await dbRTDB.ref('livePrices').once('value');
-      const livePrices = pricesSnap.val() || {};
+      const livePrices = cachedLivePrices;
       const leaderboard = [];
       for (const [uid, user] of usersState.entries()) {
         if (user.role === 'admin') continue;
@@ -137,31 +341,40 @@ async function runLeaderboardEngine() {
             else if (holding.positionType === 'short') shortLiability += holding.quantity * currentPrice;
           }
         }
-        const startingCapital = user.startingBalance || 1000000;
-        const totalValue = (user.cashBalance || 0) + longValue - shortLiability;
-        leaderboard.push({ uid, displayName: user.name || (user.email ? user.email.split('@')[0] : 'Trader'), portfolioValue: Number(totalValue.toFixed(2)), returnPct: Number((((totalValue - startingCapital) / startingCapital) * 100).toFixed(2)) });
+        const startingCapital = Number(user.startingBalance) || 1000000;
+        const totalValue = (Number(user.cashBalance) || 0) + longValue - shortLiability;
+        const retPct = Number((((totalValue - startingCapital) / startingCapital) * 100).toFixed(2));
+        const pnlAmount = Number((totalValue - startingCapital).toFixed(2));
+        leaderboard.push({
+          uid,
+          displayName: user.name || (user.email ? user.email.split('@')[0] : 'Trader'),
+          portfolioValue: Number(totalValue.toFixed(2)),
+          returnPct: retPct,
+          pnl: retPct,
+          pnlAmount: pnlAmount
+        });
       }
       leaderboard.sort((a, b) => b.portfolioValue - a.portfolioValue);
       await dbFirestore.collection('leaderboard').doc('main').set({ lastUpdated: FieldValue.serverTimestamp(), rankings: leaderboard.map((entry, index) => ({ ...entry, rank: index + 1 })) });
     } catch (e) { }
-  }, 10000);
+  }, 3000);
 }
 
 async function runMarketEngine() {
-  const statusRef = dbRTDB.ref("marketStatus/state");
   const livePricesRef = dbRTDB.ref("livePrices");
   const historyRef = dbRTDB.ref("priceHistory");
   const influenceRef = dbRTDB.ref("marketInfluence");
 
   let lastBasePriceReset = Date.now();
+  const TICK_INTERVAL_MS = 500; // Ultra-fast 500ms market updates
 
   setInterval(async () => {
     try {
-      if (((await statusRef.once("value")).val() || "CLOSED") !== "OPEN") return;
+      if (currentMarketStatus !== "OPEN") return;
       tickCount++;
       const now = Date.now();
-      const currentPrices = (await livePricesRef.once("value")).val() || {};
-      const influences = (await influenceRef.once("value")).val() || {};
+      const currentPrices = cachedLivePrices;
+      const influences = cachedInfluences;
       const newPricesUpdate = {};
       const historyUpdate = {};
       const finishedEvents = new Set();
@@ -193,7 +406,7 @@ async function runMarketEngine() {
             const durationMs = inf.durationMinutes * 60 * 1000;
             if (elapsedMs > 0 && elapsedMs <= durationMs) {
               const progress = elapsedMs / durationMs;
-              eventBias += (targetImpactPct / (durationMs / 1200)) * (Math.PI / 2) * Math.sin(progress * Math.PI);
+              eventBias += (targetImpactPct / (durationMs / TICK_INTERVAL_MS)) * (Math.PI / 2) * Math.sin(progress * Math.PI);
               currentTargetMultiplier += (targetImpactPct * ((1 - Math.cos(progress * Math.PI)) / 2));
             } else if (elapsedMs > durationMs) {
               engineBase = engineBase * (1 + targetImpactPct);
@@ -215,16 +428,16 @@ async function runMarketEngine() {
           low: Number(currLow.toFixed(2)),
           timestamp: now
         };
-        if (tickCount % 10 === 0) historyUpdate[`${ticker}/${now}`] = Number(newPrice.toFixed(2));
+        if (tickCount % 6 === 0) historyUpdate[`${ticker}/${now}`] = Number(newPrice.toFixed(2));
       }
       await livePricesRef.update(newPricesUpdate);
-      if (tickCount % 10 === 0) await historyRef.update(historyUpdate);
+      if (tickCount % 6 === 0) await historyRef.update(historyUpdate);
       for (const eventId of finishedEvents) {
         await influenceRef.child(eventId).remove();
         await dbFirestore.collection('newsEvents').doc(eventId).update({ status: 'completed' });
       }
     } catch (e) { }
-  }, 1200);
+  }, 500);
 }
 
 runIPOAutomator();
@@ -234,6 +447,14 @@ runMarketEngine();
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.status(200).json({ status: "online", message: "MarketSim Engine & API is running" });
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "healthy", timestamp: Date.now() });
+});
 
 app.use(async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -336,8 +557,8 @@ app.post('/api/executeTrade', handleCallable(async (data, context) => {
   const qty = parseInt(quantity, 10);
   if (isNaN(qty) || qty <= 0) throw new Error("Quantity must be positive");
 
-  if ((await dbRTDB.ref("marketStatus/state").once("value")).val() !== "OPEN") throw new Error("Market is closed");
-  const priceData = (await dbRTDB.ref(`livePrices/${ticker}`).once("value")).val();
+  if (currentMarketStatus !== "OPEN") throw new Error("Market is closed");
+  const priceData = cachedLivePrices[ticker] || (await dbRTDB.ref(`livePrices/${ticker}`).once("value")).val();
   if (!priceData || !priceData.price) throw new Error("Invalid ticker");
   const execPrice = priceData.price;
 
@@ -359,13 +580,15 @@ app.post('/api/executeTrade', handleCallable(async (data, context) => {
     let taxDeducted = 0;
 
     if (action === "BUY") {
-      const cost = qty * execPrice;
-      if (cashBalance < cost) {
+      const grossCost = qty * execPrice;
+      taxDeducted = Math.round(grossCost * 0.001 * 100) / 100;
+      const totalDebit = grossCost + taxDeducted;
+      if (cashBalance < totalDebit) {
         orderStatus = "rejected";
-        rejectReason = "Insufficient cash";
+        rejectReason = "Insufficient cash (including 0.1% STT)";
       } else {
-        cashBalance -= cost;
-        transaction.set(longHoldingRef, { ticker, positionType: "long", quantity: longData.quantity + qty, avgPrice: ((longData.quantity * longData.avgPrice) + cost) / (longData.quantity + qty) });
+        cashBalance -= totalDebit;
+        transaction.set(longHoldingRef, { ticker, positionType: "long", quantity: longData.quantity + qty, avgPrice: ((longData.quantity * longData.avgPrice) + grossCost) / (longData.quantity + qty) });
         orderStatus = "completed";
       }
     } else if (action === "SELL") {
@@ -374,7 +597,6 @@ app.post('/api/executeTrade', handleCallable(async (data, context) => {
         rejectReason = "Insufficient long quantity";
       } else {
         const grossProceeds = qty * execPrice;
-        // 0.1% Securities Transaction Tax (STT) on SELL or COVER (standard NSE equity delivery rate)
         taxDeducted = Math.round(grossProceeds * 0.001 * 100) / 100;
         const netProceeds = grossProceeds - taxDeducted;
 
@@ -390,11 +612,12 @@ app.post('/api/executeTrade', handleCallable(async (data, context) => {
       }
     } else if (action === "SHORT") {
       const marginRequired = qty * execPrice;
+      taxDeducted = Math.round(marginRequired * 0.001 * 100) / 100;
       if (cashBalance < marginRequired) {
         orderStatus = "rejected";
         rejectReason = "Insufficient margin";
       } else {
-        cashBalance += marginRequired;
+        cashBalance += (marginRequired - taxDeducted);
         transaction.set(shortHoldingRef, { ticker, positionType: "short", quantity: shortData.quantity + qty, avgPrice: ((shortData.quantity * shortData.avgPrice) + marginRequired) / (shortData.quantity + qty) });
         orderStatus = "completed";
       }
@@ -404,9 +627,7 @@ app.post('/api/executeTrade', handleCallable(async (data, context) => {
         rejectReason = "Insufficient short quantity";
       } else {
         const coverCost = qty * execPrice;
-        // 0.1% STT on Cover
-        const taxRate = 0.001;
-        taxDeducted = Math.round((coverCost * taxRate) * 100) / 100;
+        taxDeducted = Math.round(coverCost * 0.001 * 100) / 100;
         const totalDebit = coverCost + taxDeducted;
 
         const shortPrice = shortData.avgPrice || execPrice;
@@ -416,7 +637,7 @@ app.post('/api/executeTrade', handleCallable(async (data, context) => {
 
         if (cashBalance < totalDebit) {
           orderStatus = "rejected";
-          rejectReason = "Insufficient cash to cover including tax";
+          rejectReason = "Insufficient cash to cover (including 0.1% STT)";
         } else {
           cashBalance -= totalDebit;
           if (shortData.quantity - qty === 0) transaction.delete(shortHoldingRef);
@@ -475,18 +696,66 @@ app.post('/api/subscribeIPO', handleCallable(async (data, context) => {
     const ipoRef = dbFirestore.collection("ipos").doc(data.ipoId);
     const ipoSnap = await transaction.get(ipoRef);
     if (!ipoSnap.exists) throw new Error("IPO not found");
+    const ipoData = ipoSnap.data();
 
-    const cost = qty * ipoSnap.data().price;
+    if (ipoData.status !== "open") {
+      throw new Error(`IPO is currently ${ipoData.status}. Bids are only accepted while open.`);
+    }
+
+    const cost = qty * Number(ipoData.price);
     const userData = (await transaction.get(userRef)).data();
     if (userData.cashBalance < cost) throw new Error("Insufficient cash");
 
     const subRef = ipoRef.collection("subscriptions").doc(uid);
-    const existingSub = (await transaction.get(subRef)).data();
+    const existingSubSnap = await transaction.get(subRef);
+    const existingSub = existingSubSnap.data();
+
+    const lotsToAdd = parseInt(data.requestedLots, 10) || Math.max(1, Math.floor(qty / (Number(ipoData.lotSize) || 1)));
 
     transaction.update(userRef, { cashBalance: userData.cashBalance - cost });
-    if (existingSub) transaction.update(subRef, { requestedShares: existingSub.requestedShares + qty, requestedLots: (existingSub.requestedLots || 0) + (data.requestedLots || 1), investedAmount: existingSub.investedAmount + cost, timestamp: Date.now() });
-    else transaction.set(subRef, { uid, requestedShares: qty, requestedLots: data.requestedLots || 1, allocatedShares: 0, investedAmount: cost, timestamp: Date.now(), status: "pending" });
-    return { success: true };
+    if (existingSub) {
+      transaction.update(subRef, {
+        requestedShares: existingSub.requestedShares + qty,
+        requestedLots: (existingSub.requestedLots || 0) + lotsToAdd,
+        investedAmount: (existingSub.investedAmount || 0) + cost,
+        timestamp: Date.now()
+      });
+    } else {
+      transaction.set(subRef, {
+        uid,
+        requestedShares: qty,
+        requestedLots: lotsToAdd,
+        allocatedShares: 0,
+        allocatedLots: 0,
+        investedAmount: cost,
+        timestamp: Date.now(),
+        status: "pending"
+      });
+    }
+
+    // Atomically update live subscription metrics on IPO
+    const currentSubLots = Number(ipoData.totalSubscribedLots) || 0;
+    const currentSubShares = Number(ipoData.totalSubscribedShares) || 0;
+    const currentSubCount = Number(ipoData.subscriptionCount) || 0;
+
+    const newSubLots = currentSubLots + lotsToAdd;
+    const newSubShares = currentSubShares + qty;
+    const newSubCount = existingSub ? currentSubCount : (currentSubCount + 1);
+    const totalOfferedLots = Number(ipoData.totalLots) || 1;
+    const newSubRate = Number((newSubLots / totalOfferedLots).toFixed(2));
+
+    transaction.update(ipoRef, {
+      totalSubscribedLots: newSubLots,
+      totalSubscribedShares: newSubShares,
+      subscriptionCount: newSubCount,
+      subscriptionRate: newSubRate
+    });
+
+    return { 
+      success: true, 
+      totalSubscribedLots: newSubLots, 
+      subscriptionRate: newSubRate 
+    };
   });
 }));
 
@@ -501,6 +770,13 @@ app.post('/api/listIPO', handleCallable(async (data, context) => {
   await verifyAdmin(context.auth?.uid);
   await dbFirestore.collection("ipos").doc(data.ipoId).update({ triggerListing: true });
   return { success: true };
+}));
+
+app.post('/api/adminUpdateIPOGMP', handleCallable(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  const newGmp = Number(data.listingPremiumPct) || 0;
+  await dbFirestore.collection("ipos").doc(data.ipoId).update({ listingPremiumPct: newGmp });
+  return { success: true, listingPremiumPct: newGmp };
 }));
 
 app.post('/api/adminSetMarketStatus', handleCallable(async (data, context) => {
@@ -524,8 +800,20 @@ app.post('/api/adminToggleUserFreeze', handleCallable(async (data, context) => {
 app.post('/api/adminReleaseNews', handleCallable(async (data, context) => {
   await verifyAdmin(context.auth?.uid);
   const now = Date.now();
-  await dbFirestore.collection("newsEvents").doc(data.eventId).update({ status: "active", startTime: now, durationMinutes: data.durationMinutes || 15 });
-  await dbRTDB.ref(`marketInfluence/${data.eventId}`).set({ id: data.eventId, impacts: data.adminData.stockImpacts, durationMinutes: data.durationMinutes || 15, startTime: now, status: "active" });
+  await dbFirestore.collection("newsEvents").doc(data.eventId).update({ 
+    status: "active", 
+    startTime: now, 
+    firedAt: now,
+    durationMinutes: data.durationMinutes || 15 
+  });
+  await dbRTDB.ref(`marketInfluence/${data.eventId}`).set({ 
+    id: data.eventId, 
+    headline: data.adminData?.headline || "Breaking Market News",
+    impacts: data.adminData?.stockImpacts || {}, 
+    durationMinutes: data.durationMinutes || 15, 
+    startTime: now, 
+    status: "active" 
+  });
 
   forceBasePriceReset = true;
 
@@ -546,5 +834,116 @@ app.post('/api/adminCancelNews', handleCallable(async (data, context) => {
   return { success: true };
 }));
 
+app.post('/api/adminCreateSingleNews', handleCallable(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  if (!data.headline) throw new Error("Headline is required.");
+  const eventRef = dbFirestore.collection("newsEvents").doc();
+  const eventData = {
+    id: eventRef.id,
+    headline: data.headline,
+    stockImpacts: data.stockImpacts || {},
+    durationMinutes: Number(data.durationMinutes) || 15,
+    status: "draft",
+    startTime: 0,
+    createdAt: Date.now()
+  };
+  await eventRef.set(eventData);
+  return { success: true, eventId: eventRef.id };
+}));
+
+app.post('/api/adminDeleteSingleNews', handleCallable(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  if (!data.eventId) throw new Error("eventId is required.");
+  await dbFirestore.collection("newsEvents").doc(data.eventId).delete();
+  await dbRTDB.ref(`marketInfluence/${data.eventId}`).remove();
+  forceBasePriceReset = true;
+  return { success: true };
+}));
+
+app.post('/api/adminTriggerNextNews', handleCallable(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  const snap = await dbFirestore.collection("newsEvents")
+    .where("status", "==", "draft")
+    .orderBy("createdAt", "asc")
+    .limit(1)
+    .get();
+
+  if (snap.empty) {
+    throw new Error("No draft news events in queue to trigger.");
+  }
+
+  const doc = snap.docs[0];
+  const event = doc.data();
+  const now = Date.now();
+  const duration = event.durationMinutes || 15;
+
+  await doc.ref.update({
+    status: "active",
+    startTime: now,
+    firedAt: now,
+    durationMinutes: duration
+  });
+
+  await dbRTDB.ref(`marketInfluence/${doc.id}`).set({
+    id: doc.id,
+    headline: event.headline || "Breaking Market News",
+    impacts: event.stockImpacts || {},
+    durationMinutes: duration,
+    startTime: now,
+    status: "active"
+  });
+
+  forceBasePriceReset = true;
+  return { success: true, eventId: doc.id, headline: event.headline };
+}));
+
+app.post('/api/adminTriggerAllNews', handleCallable(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  const snap = await dbFirestore.collection("newsEvents")
+    .where("status", "==", "draft")
+    .get();
+
+  if (snap.empty) {
+    throw new Error("No draft news events in queue to trigger.");
+  }
+
+  const now = Date.now();
+  for (const doc of snap.docs) {
+    const event = doc.data();
+    const duration = event.durationMinutes || 15;
+    await doc.ref.update({
+      status: "active",
+      startTime: now,
+      firedAt: now,
+      durationMinutes: duration
+    });
+    await dbRTDB.ref(`marketInfluence/${doc.id}`).set({
+      id: doc.id,
+      headline: event.headline || "Breaking Market News",
+      impacts: event.stockImpacts || {},
+      durationMinutes: duration,
+      startTime: now,
+      status: "active"
+    });
+  }
+
+  forceBasePriceReset = true;
+  return { success: true, count: snap.size };
+}));
+
+app.post('/api/adminDeleteAllNews', handleCallable(async (data, context) => {
+  await verifyAdmin(context.auth?.uid);
+  const snap = await dbFirestore.collection("newsEvents").get();
+  const batchSize = 500;
+  for (let i = 0; i < snap.docs.length; i += batchSize) {
+    const batch = dbFirestore.batch();
+    snap.docs.slice(i, i + batchSize).forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+  }
+  await dbRTDB.ref("marketInfluence").remove();
+  forceBasePriceReset = true;
+  return { success: true, deletedCount: snap.size };
+}));
+
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 MarketSim Engine & API running on port ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`🚀 MarketSim Engine & API running on port ${PORT}`));

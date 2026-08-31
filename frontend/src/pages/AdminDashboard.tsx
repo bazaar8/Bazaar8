@@ -9,9 +9,19 @@ import { useTheme } from "../hooks/useTheme";
 import { 
   LayoutDashboard, Users, Newspaper, 
   Sparkles, Power, Pause, Play, ShieldAlert, LogOut,
-  Plus, Send, CheckCircle, Upload, X, Clock, TrendingUp, Mail, BarChart2, Sun, Moon, Sliders, Coins
+  Plus, Send, CheckCircle, Upload, Download, X, Clock, TrendingUp, Mail, BarChart2, Sun, Moon, Sliders, Coins, Edit, Trash2, Zap, Radio
 } from "lucide-react";
-import { importNewsEvents, releaseEventNow, cancelEvent } from "../services/newsAdminService";
+import { 
+  importNewsEvents, 
+  createSingleNewsEvent,
+  releaseEventNow, 
+  cancelEvent, 
+  deleteAllNewsEvents,
+  deleteSingleNewsEvent,
+  triggerNextNewsEvent,
+  triggerAllNewsEvents
+} from "../services/newsAdminService";
+import { STOCKS_CATALOG } from "../data/stocksData";
 
 type Tab = 'dashboard' | 'market' | 'participants' | 'stocks' | 'logs' | 'news' | 'ipo';
 
@@ -28,6 +38,12 @@ export default function AdminDashboard() {
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [parsedData, setParsedData] = useState<any[]>([]);
   const [eventDuration, setEventDuration] = useState(15);
+  const [newsInputMode, setNewsInputMode] = useState<"single" | "bulk">("single");
+  const [singleHeadline, setSingleHeadline] = useState("");
+  const [singleDuration, setSingleDuration] = useState(15);
+  const [singleImpacts, setSingleImpacts] = useState<{ [ticker: string]: number }>({});
+  const [impactTicker, setImpactTicker] = useState("RELIANCE");
+  const [impactValue, setImpactValue] = useState("");
 
   const [ipoName, setIpoName] = useState("");
   const [ipoTicker, setIpoTicker] = useState("");
@@ -231,11 +247,30 @@ export default function AdminDashboard() {
 
   const clearCSV = () => { setCsvText(""); setParsedData([]); setCsvErrors([]); };
 
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim().replace(/^"|"$/g, '').trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim().replace(/^"|"$/g, '').trim());
+    return result;
+  };
+
   const parseCSV = (type: "news" | "users" | "stocks") => {
     const lines = csvText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     if (lines.length < 2) return setCsvErrors(["CSV must contain a header row and at least one data row."]);
     
-    const headers = lines[0].toLowerCase().split(',').map(h => h.trim());
+    const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
     const errors: string[] = [];
     const results: any[] = [];
 
@@ -246,13 +281,19 @@ export default function AdminDashboard() {
     if (errors.length > 0) return setCsvErrors(errors);
 
     for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(',').map(c => c.trim());
-      if (cols.length !== headers.length) { errors.push(`Row ${i + 1} has mismatched columns.`); continue; }
+      const cols = parseCSVLine(lines[i]);
+      if (cols.length !== headers.length) { errors.push(`Row ${i + 1} has mismatched columns (expected ${headers.length}, got ${cols.length}).`); continue; }
       if (!cols[0]) { errors.push(`Row ${i + 1} is missing a headline.`); continue; }
 
       if (type === "news") {
         const impacts: Record<string, number> = {};
-        for (let j = 1; j < cols.length; j++) impacts[headers[j].toUpperCase()] = parseFloat(cols[j]) || 0;
+        for (let j = 1; j < cols.length; j++) {
+          const tickerName = headers[j].toUpperCase();
+          const impactVal = parseFloat(cols[j]);
+          if (!isNaN(impactVal) && impactVal !== 0) {
+            impacts[tickerName] = impactVal;
+          }
+        }
         results.push({ headline: cols[0], stockImpacts: impacts, durationMinutes: eventDuration });
       } else if (type === "users") {
         results.push({ email: cols[0], password: cols[1], name: cols[2] || "Trader", startingBalance: cols[3] || 1000000 });
@@ -261,6 +302,74 @@ export default function AdminDashboard() {
       }
     }
     setCsvErrors([]); setParsedData(results); setCsvType(type);
+  };
+
+  const downloadSampleNewsCSV = () => {
+    const csvContent = [
+      "Headline,RELIANCE,TCS,HDFCBANK,ICICIBANK,INFY,BHARTIARTL,ITC,SBIN,LT,MARUTI,TATAMOTORS,SUNPHARMA,AXISBANK,TITAN,TATASTEEL",
+      '"RBI Unexpectedly Cuts Repo Rate by 25bps Boosting Liquidity and Credit Growth",0,0,3.8,4.2,0,0,0.5,4.5,2.0,1.8,2.2,0,3.9,1.5,0',
+      '"Reliance Inks ₹18000Cr Strategic Green Energy & Solar Gigafactory Pact",5.5,0,0.5,0.8,0,0,0,1.0,2.8,0,0,0,0.5,0,0',
+      '"IT Giant Secures $1.4B Generative AI and Cloud Transformation Deal with Fortune 500",0,4.9,0,0,5.4,0,0,0,0,0,0,0,0,0,0',
+      '"Crude Oil Spikes 8% Above $90/bbl Amid Middle East Supply Disruptions",-3.8,0,-1.2,-1.0,0,0,0,-1.5,-1.5,-2.8,-3.2,0,-1.0,0,-1.5',
+      '"Cabinet Approves ₹15000Cr High-Speed Rail Corridor and Defense Infrastructure Project",0,0,0.8,1.0,0,0,0,1.8,6.8,0,3.5,0,0.8,0,4.2',
+      '"Auto Index Surges on Record Festive Season Vehicle Deliveries and EV Subsidies",0,0,0,0,0,0,0,0,0,4.8,5.5,0,0,0,0',
+      '"Telecom Regulatory Authority Approves Industry-Wide Tariff Hike of 18%",0,0,0,0,0,7.2,0,0,0,0,0,0,0,0,0',
+      '"US FDA Issues Zero Form 483 Observations for Key Manufacturing Facility",0,0,0,0,0,0,0,0,0,0,0,6.5,0,0,0',
+      '"FMCG Demand Rebounds with Strong Rural Volume Growth and Normal Monsoon",0,0,0,0,0,0,4.8,0,0,1.2,0,0,0,2.5,0',
+      '"Steel Ministry Imposes 12% Anti-Dumping Duty on Cheap Imported Hot-Rolled Coils",0,0,0,0,0,0,0,0,1.0,0,0,0,0,0,7.5',
+      '"HDFC Bank & ICICI Bank Post Stellar Q2 Results with 24% Net Profit Surge",0,0,4.6,5.0,0,0,0,2.5,0,0,0,0,3.8,0,0',
+      '"Global Semiconductor Supply Shortages Hit Production Targets Across Automakers",0,0,0,0,0,0,0,0,-1.2,-3.5,-4.2,0,0,0,0',
+      '"Government Announces Major Gold Import Duty Cut Ahead of Wedding Season",0,0,0,0,0,0,0,0,0,0,0,0,0,6.2,0',
+      '"SEBI Tightens Derivatives and F&O Regulations Curbing Retail Speculation Volume",0,0,-2.2,-1.8,0,0,0,-1.5,0,0,0,0,-2.0,0,0',
+      '"India GDP Growth Beats Consensus Estimates Accelerating to 7.8% in Latest Quarter",2.5,1.5,3.2,3.5,1.8,1.2,1.5,3.8,4.0,2.5,2.8,1.0,2.9,2.2,2.0'
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "news_template.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadSampleUsersCSV = () => {
+    const csvContent = [
+      "Email,Password,Name,StartingBalance",
+      "trader1@bazaar.com,Trader@2026,Aarav Sharma,1000000",
+      "trader2@bazaar.com,Trader@2026,Priya Patel,1000000",
+      "trader3@bazaar.com,Trader@2026,Rohan Mehta,1000000"
+    ].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "users_template.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadSampleStocksCSV = () => {
+    const csvContent = [
+      "Ticker,Name,Sector,BasePrice,Volatility",
+      "RELIANCE,Reliance Industries,Energy,2950.0,0.002",
+      "TCS,Tata Consultancy Services,IT,4150.0,0.0018",
+      "HDFCBANK,HDFC Bank,Financial Services,1720.0,0.0015",
+      "INFY,Infosys,IT,1850.0,0.0022"
+    ].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "stocks_template.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleImportData = async () => {
@@ -277,17 +386,116 @@ export default function AdminDashboard() {
     finally { setProcessingAction(null); }
   };
 
+  const handleAddImpact = () => {
+    const ticker = impactTicker.toUpperCase().trim();
+    const val = parseFloat(impactValue);
+    if (!ticker) return;
+    if (isNaN(val)) return alert("Please enter a valid percentage impact (e.g. 5.0 or -3.5)");
+    setSingleImpacts(prev => ({ ...prev, [ticker]: val }));
+    setImpactValue("");
+  };
+
+  const handleRemoveImpact = (ticker: string) => {
+    setSingleImpacts(prev => {
+      const copy = { ...prev };
+      delete copy[ticker];
+      return copy;
+    });
+  };
+
+  const handleCreateSingleNews = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!singleHeadline.trim()) return alert("Please enter a news headline.");
+    setProcessingAction('create-single-news');
+    logAdminAction("CREATE_SINGLE_NEWS", { headline: singleHeadline, stockImpacts: singleImpacts });
+    try {
+      await createSingleNewsEvent({
+        headline: singleHeadline.trim(),
+        stockImpacts: singleImpacts,
+        durationMinutes: singleDuration || 15
+      });
+      setSingleHeadline("");
+      setSingleImpacts({});
+      setSingleDuration(15);
+      alert("✅ News event added to queue as DRAFT! You can trigger it anytime.");
+    } catch (err: any) {
+      alert("Error creating news: " + err.message);
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
   const handleFireNews = async (event: any) => {
-    if (!window.confirm(`Fire event: "${event.headline}" over ${eventDuration} minutes?`)) return;
+    if (!window.confirm(`Trigger event: "${event.headline}" over ${event.durationMinutes || eventDuration} minutes?`)) return;
     setProcessingAction(`fire-${event.id}`);
     logAdminAction("FIRE_NEWS", { eventId: event.id, headline: event.headline });
-    try { await releaseEventNow(event.id, event, eventDuration); } catch (err: any) { alert("Error firing news: " + err.message); } finally { setProcessingAction(null); }
+    try { 
+      await releaseEventNow(event.id, event, event.durationMinutes || eventDuration); 
+    } catch (err: any) { 
+      alert("Error triggering news: " + err.message); 
+    } finally { 
+      setProcessingAction(null); 
+    }
+  };
+
+  const handleTriggerNextNews = async () => {
+    setProcessingAction('trigger-next-news');
+    logAdminAction("TRIGGER_NEXT_NEWS", {});
+    try {
+      const res: any = await triggerNextNewsEvent();
+      alert(`⚡ Triggered event: "${res?.data?.headline || 'Next in Queue'}" on the live wire!`);
+    } catch (err: any) {
+      alert("Error triggering next news: " + err.message);
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
+  const handleTriggerAllNews = async () => {
+    if (!window.confirm("⚡ Are you sure you want to TRIGGER ALL queued draft news events at once?")) return;
+    setProcessingAction('trigger-all-news');
+    logAdminAction("TRIGGER_ALL_NEWS", {});
+    try {
+      const res: any = await triggerAllNewsEvents();
+      alert(`⚡ Successfully triggered ${res?.data?.count || 'all'} queued news events on the live wire!`);
+    } catch (err: any) {
+      alert("Error triggering all news: " + err.message);
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
+  const handleDeleteSingleNews = async (eventId: string, headline: string) => {
+    if (!window.confirm(`Delete event "${headline}"?`)) return;
+    setProcessingAction(`delete-${eventId}`);
+    logAdminAction("DELETE_SINGLE_NEWS", { eventId });
+    try {
+      await deleteSingleNewsEvent(eventId);
+    } catch (err: any) {
+      alert("Error deleting news: " + err.message);
+    } finally {
+      setProcessingAction(null);
+    }
   };
 
   const handleCancelNews = async (eventId: string) => {
     setProcessingAction(`cancel-${eventId}`);
     logAdminAction("CANCEL_NEWS", { eventId });
     try { await cancelEvent(eventId); } catch (err: any) { alert("Error cancelling news: " + err.message); } finally { setProcessingAction(null); }
+  };
+
+  const handleDeleteAllNews = async () => {
+    if (!window.confirm("⚠️ Are you sure you want to PERMANENTLY DELETE ALL news events and clear active market influences?")) return;
+    setProcessingAction('delete-all-news');
+    logAdminAction("DELETE_ALL_NEWS", {});
+    try {
+      await deleteAllNewsEvents();
+      alert("All news events have been successfully wiped from the database!");
+    } catch (err: any) {
+      alert("Error deleting news: " + err.message);
+    } finally {
+      setProcessingAction(null);
+    }
   };
 
   const handleCreateIPO = async () => {
@@ -307,6 +515,10 @@ export default function AdminDashboard() {
         sector: "Upcoming", 
         allotmentType: "lottery",                
         status: currentStatus,
+        totalSubscribedLots: 0,
+        totalSubscribedShares: 0,
+        subscriptionCount: 0,
+        subscriptionRate: 0,
         openTime: startOpen, 
         closeTime: ipoCloseTime ? new Date(ipoCloseTime).getTime() : Date.now() + 3600000,
         listTime: ipoListTime ? new Date(ipoListTime).getTime() : Date.now() + 7200000
@@ -367,6 +579,25 @@ export default function AdminDashboard() {
     } catch (err: any) { alert(`Error during ${action}: ` + err.message); } finally { setProcessingAction(null); }
   };
 
+  const [editingGmpId, setEditingGmpId] = useState<string | null>(null);
+  const [gmpValue, setGmpValue] = useState<string>("");
+
+  const handleUpdateIPOGMP = async (ipoId: string, ticker: string) => {
+    const newGmp = parseFloat(gmpValue);
+    if (isNaN(newGmp)) return;
+    setProcessingAction(`${ipoId}-gmp`);
+    logAdminAction("UPDATE_IPO_GMP", { ipoSymbol: ticker, newGMP: newGmp });
+    try {
+      await updateDoc(doc(db, "ipos", ipoId), { listingPremiumPct: newGmp });
+      setEditingGmpId(null);
+      setGmpValue("");
+    } catch (err: any) {
+      alert("Failed to update GMP: " + err.message);
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
   const navItems = [
     { id: 'dashboard', label: 'SYSTEM', icon: LayoutDashboard },
     { id: 'market', label: 'MARKET', icon: Sliders },
@@ -379,15 +610,33 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-root)] text-[var(--text-main)] flex flex-col md:flex-row font-sans transition-colors duration-200">
-      <div className="w-full md:w-[220px] bg-[var(--bg-card)] border-r border-[var(--border-subtle)] flex flex-col sticky top-0 h-screen z-50 transition-colors duration-200">
-        <div className="p-4 border-b border-[var(--border-subtle)]">
+      <div className="w-full md:w-[220px] bg-[var(--bg-card)] border-b md:border-b-0 md:border-r border-[var(--border-subtle)] flex flex-col sticky top-0 md:h-screen z-50 transition-colors duration-200">
+        <div className="p-3 sm:p-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-5 h-5 text-amber-500" />
-            <span className="text-amber-500 font-bold tracking-tight text-lg">Admin Dashboard</span>
+            <span className="text-amber-500 font-bold tracking-tight text-base sm:text-lg">Admin Dashboard</span>
+          </div>
+
+          <div className="flex items-center gap-1 md:hidden">
+            <button
+              onClick={toggleTheme}
+              className="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)] rounded"
+              title="Toggle Theme"
+            >
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={() => logoutUser()}
+              className="p-1.5 text-[var(--down-color)] rounded"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
         
-        <nav className="flex-1 overflow-y-auto flex flex-col py-3">
+        {/* Horizontal scrollable navigation on mobile, vertical sidebar on desktop */}
+        <nav className="flex flex-row md:flex-col overflow-x-auto md:overflow-y-auto py-2 md:py-3 px-2 md:px-0 gap-1 md:gap-0 scrollbar-none flex-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -395,18 +644,20 @@ export default function AdminDashboard() {
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id as Tab)}
-                className={`flex items-center gap-2.5 px-5 py-2.5 text-[10px] font-bold tracking-widest uppercase transition-colors text-left ${
-                  isActive ? 'bg-[var(--bg-root)] text-[var(--up-color)] border-l-2 border-[var(--up-color)]' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-root)] border-l-2 border-transparent'
+                className={`flex items-center gap-2 px-3 sm:px-5 py-2 sm:py-2.5 text-[10px] font-bold tracking-widest uppercase transition-colors whitespace-nowrap rounded md:rounded-none text-left ${
+                  isActive 
+                    ? 'bg-[var(--bg-root)] text-[var(--up-color)] md:border-l-2 md:border-[var(--up-color)] font-black' 
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-root)] md:border-l-2 md:border-transparent'
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
-                {item.label}
+                <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{item.label}</span>
               </button>
             )
           })}
         </nav>
 
-        <div className="p-3 border-t border-[var(--border-subtle)]">
+        <div className="hidden md:block p-3 border-t border-[var(--border-subtle)]">
           <button
             onClick={toggleTheme}
             className="w-full flex items-center gap-2.5 px-4 py-2 mb-2 text-[10px] font-bold tracking-widest uppercase text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-root)] transition-colors rounded text-left"
@@ -425,7 +676,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      <div className="flex-1 p-6 overflow-x-hidden min-w-0">
+      <div className="flex-1 p-3 sm:p-6 overflow-x-hidden min-w-0">
         <div className="max-w-6xl mx-auto space-y-6">
           
           {activeTab === 'dashboard' && (
@@ -520,13 +771,13 @@ export default function AdminDashboard() {
                   <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--down-color)] border-b border-[var(--border-subtle)] pb-2 flex items-center gap-2">
                     <ShieldAlert className="w-3.5 h-3.5" /> Force Price Overwrite
                   </h2>
-                  <div className="flex gap-2">
-                    <input type="text" placeholder="TICKER" value={forceTicker} onChange={e => setForceTicker(e.target.value)} className="w-1/3 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] font-mono text-xs uppercase rounded focus:outline-none focus:border-[var(--up-color)]" />
-                    <input type="number" placeholder="Price" value={forcePrice} onChange={e => setForcePrice(e.target.value)} className="w-1/3 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] font-mono text-xs rounded focus:outline-none focus:border-[var(--up-color)]" />
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input type="text" placeholder="TICKER" value={forceTicker} onChange={e => setForceTicker(e.target.value)} className="w-full sm:w-1/3 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] font-mono text-xs uppercase rounded focus:outline-none focus:border-[var(--up-color)]" />
+                    <input type="number" placeholder="Price" value={forcePrice} onChange={e => setForcePrice(e.target.value)} className="w-full sm:w-1/3 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] font-mono text-xs rounded focus:outline-none focus:border-[var(--up-color)]" />
                     <button 
                       onClick={handleForcePrice} 
                       disabled={processingAction === 'force-price'} 
-                      className="flex-1 bg-[var(--down-color)] text-white text-[11px] font-bold uppercase rounded hover:opacity-90 disabled:opacity-50 flex items-center justify-center"
+                      className="w-full sm:flex-1 py-2 bg-[var(--down-color)] text-white text-[11px] font-bold uppercase rounded hover:opacity-90 disabled:opacity-50 flex items-center justify-center min-h-[36px]"
                     >
                       {processingAction === 'force-price' ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : "Execute"}
                     </button>
@@ -553,11 +804,22 @@ export default function AdminDashboard() {
                 <div className="terminal-card p-5 space-y-3">
                   <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
                     <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)]">Bulk Import CSV</h2>
-                    {csvText && (
-                      <button onClick={clearCSV} className="text-[var(--down-color)] hover:opacity-80">
-                        <X className="w-4 h-4" />
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={downloadSampleUsersCSV}
+                        className="flex items-center gap-1 text-[10px] font-mono font-bold text-blue-400 hover:text-blue-300 px-2 py-0.5 rounded bg-blue-400/10 border border-blue-400/25 transition-colors"
+                        title="Download sample users CSV"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Sample CSV</span>
                       </button>
-                    )}
+                      {csvText && (
+                        <button onClick={clearCSV} className="text-[var(--down-color)] hover:opacity-80">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="text-[10px] text-[var(--text-muted)] font-mono bg-[var(--bg-root)] p-2 rounded">
                     Format: Email,Password,Name,StartingBalance
@@ -653,11 +915,22 @@ export default function AdminDashboard() {
               <div className="terminal-card p-5 space-y-3">
                 <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
                   <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)]">Bulk Import CSV</h2>
-                  {csvText && (
-                    <button onClick={clearCSV} className="text-[var(--down-color)] hover:opacity-80">
-                      <X className="w-4 h-4" />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={downloadSampleStocksCSV}
+                      className="flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-400 hover:text-emerald-300 px-2 py-0.5 rounded bg-emerald-400/10 border border-emerald-400/25 transition-colors"
+                      title="Download sample stocks CSV"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Sample CSV</span>
                     </button>
-                  )}
+                    {csvText && (
+                      <button onClick={clearCSV} className="text-[var(--down-color)] hover:opacity-80">
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="text-[10px] text-[var(--text-muted)] font-mono bg-[var(--bg-root)] p-2 rounded">
                   Format: Ticker,Name,Sector,BasePrice,Volatility<br/>Example: RELIANCE,Reliance Ind,Energy,2950.0,0.002
@@ -789,140 +1062,500 @@ export default function AdminDashboard() {
 
           {activeTab === 'news' && (
             <div className="space-y-6">
-              <div className="border-b border-[var(--border-subtle)] pb-3">
-                <h1 className="text-sm font-bold uppercase tracking-widest text-[var(--text-main)]">News Matrix Importer</h1>
+              <div className="border-b border-[var(--border-subtle)] pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h1 className="text-sm font-bold uppercase tracking-widest text-[var(--text-main)] flex items-center gap-2">
+                    <Radio className="w-4 h-4 text-[#3b82f6] animate-pulse" />
+                    News Matrix & Live Wire Controller
+                  </h1>
+                  <p className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">
+                    Add news events (single or bulk), manage the queue, and trigger breaking news alerts on demand.
+                  </p>
+                </div>
               </div>
               
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* LEFT COLUMN: NEWS COMPOSER (SINGLE OR BULK) */}
                 <div className="lg:col-span-1 terminal-card p-5 space-y-4 h-fit">
-                  <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
-                    <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)]">CSV Upload</h2>
-                    {csvText && (
-                      <button onClick={clearCSV} className="text-[var(--down-color)] hover:opacity-80">
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
                   
-                  <div className="text-[10px] text-[var(--text-muted)] font-mono bg-[var(--bg-root)] p-2 rounded">
-                    Format: Headline,TICKER1,TICKER2...<br/>Example: Rate Cut,RELIANCE,TCS
+                  {/* Mode Switcher Tabs */}
+                  <div className="flex bg-[var(--bg-root)] p-1 rounded border border-[var(--border-subtle)] font-mono text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setNewsInputMode("single")}
+                      className={`flex-1 py-1.5 rounded font-bold transition-all flex items-center justify-center gap-1.5 ${
+                        newsInputMode === "single"
+                          ? "bg-[#3b82f6] text-white shadow-sm"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                      }`}
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Single News</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewsInputMode("bulk")}
+                      className={`flex-1 py-1.5 rounded font-bold transition-all flex items-center justify-center gap-1.5 ${
+                        newsInputMode === "bulk"
+                          ? "bg-amber-400 text-black shadow-sm"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                      }`}
+                    >
+                      <Upload className="w-3 h-3" />
+                      <span>Bulk CSV</span>
+                    </button>
                   </div>
 
-                  {!csvText ? (
-                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-[var(--border-subtle)] border-dashed rounded cursor-pointer bg-[var(--bg-root)] hover:opacity-80 transition-colors">
-                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                        <Upload className="w-6 h-6 mb-2 text-[var(--text-muted)]" />
-                        <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest">Click to upload CSV file</p>
+                  {/* MODE 1: SINGLE NEWS COMPOSER */}
+                  {newsInputMode === "single" && (
+                    <form onSubmit={handleCreateSingleNews} className="space-y-4">
+                      <div>
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase block mb-1">
+                          News Headline
+                        </label>
+                        <textarea
+                          value={singleHeadline}
+                          onChange={(e) => setSingleHeadline(e.target.value)}
+                          placeholder="e.g. Reliance Signs ₹18,000Cr Strategic Green Energy & Solar Gigafactory Pact"
+                          rows={3}
+                          required
+                          className="w-full px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#3b82f6]"
+                        />
                       </div>
-                      <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
-                    </label>
-                  ) : (
-                    <textarea 
-                      value={csvText} 
-                      onChange={e => setCsvText(e.target.value)} 
-                      className="w-full h-32 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs font-mono rounded focus:outline-none focus:border-[var(--up-color)]"
-                    />
-                  )}
-                  
-                  <div className="flex items-center gap-2">
-                    <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Impact Duration (Mins)</label>
-                    <input 
-                      type="number" 
-                      value={eventDuration} 
-                      onChange={e => setEventDuration(parseInt(e.target.value) || 15)} 
-                      className="w-16 px-2 py-1 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[var(--up-color)]"
-                    />
-                  </div>
 
-                  <button 
-                    onClick={() => parseCSV("news")}
-                    disabled={!csvText}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] hover:bg-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] text-[11px] font-bold uppercase rounded transition-colors"
-                  >
-                    <Upload className="w-3.5 h-3.5" /> Validate CSV
-                  </button>
+                      {/* Stock Impact Adder */}
+                      <div className="space-y-2 bg-[var(--bg-root)] p-3 rounded border border-[var(--border-subtle)]">
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase block">
+                          Stock Price Impacts (%)
+                        </label>
 
-                  {csvErrors.length > 0 && (
-                    <div className="p-3 bg-[#f2364515] border border-[var(--down-color)] rounded mt-2">
-                      <ul className="list-disc pl-4 text-[10px] text-[var(--down-color)]">
-                        {csvErrors.map((err, i) => <li key={i}>{err}</li>)}
-                      </ul>
-                    </div>
-                  )}
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <select
+                            value={impactTicker}
+                            onChange={(e) => setImpactTicker(e.target.value)}
+                            className="w-full sm:flex-1 min-w-0 px-2 py-1.5 bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-main)] font-mono text-xs rounded focus:outline-none focus:border-[#3b82f6]"
+                          >
+                            {Object.keys(prices).length > 0 ? (
+                              Object.entries(prices).map(([ticker, data]: [string, any]) => (
+                                <option key={ticker} value={ticker}>
+                                  {ticker} ({((data?.name || ticker) as string).slice(0, 16)})
+                                </option>
+                              ))
+                            ) : (
+                              STOCKS_CATALOG.map((s) => (
+                                <option key={s.ticker} value={s.ticker}>
+                                  {s.ticker} ({s.name.slice(0, 14)}...)
+                                </option>
+                              ))
+                            )}
+                          </select>
 
-                  {parsedData.length > 0 && csvType === "news" && (
-                    <div className="mt-4 border-t border-[var(--border-subtle)] pt-4">
-                      <h3 className="text-xs font-bold text-[var(--text-main)] mb-2">Preview ({parsedData.length} Events)</h3>
-                      <button 
-                        onClick={handleImportData} 
-                        disabled={processingAction === 'import'}
-                        className="w-full py-2 bg-[var(--up-color)] hover:opacity-90 disabled:opacity-50 text-white text-[11px] font-bold uppercase rounded flex items-center justify-center gap-2 transition-opacity"
-                      >
-                        {processingAction === 'import' ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : null}
-                        Import to Database
-                      </button>
-                    </div>
-                  )}
-                </div>
+                          <div className="flex gap-2 flex-shrink-0">
+                            <input
+                              type="number"
+                              step="0.1"
+                              placeholder="e.g. 5.5 or -3.0"
+                              value={impactValue}
+                              onChange={(e) => setImpactValue(e.target.value)}
+                              className="flex-1 sm:w-28 px-2 py-1.5 bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-main)] font-mono text-xs rounded focus:outline-none focus:border-[#3b82f6]"
+                            />
 
-                <div className="lg:col-span-2 terminal-card overflow-hidden">
-                  <div className="p-4 border-b border-[var(--border-subtle)] bg-[var(--bg-root)]">
-                    <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)]">Event Queue & Active Events</h2>
-                  </div>
-                  
-                  {adminEvents.length === 0 ? (
-                    <div className="p-4 flex flex-col items-center justify-center text-[var(--text-muted)] py-12">
-                      <Newspaper className="w-8 h-8 mb-2 opacity-40" />
-                      <p className="text-xs font-mono">No events imported yet.</p>
-                    </div>
-                  ) : (
-                    <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
-                      {adminEvents.map(evt => (
-                        <div key={evt.id} className="bg-[var(--bg-root)] border border-[var(--border-subtle)] p-4 rounded">
-                          <div className="flex justify-between items-start mb-2">
-                            <h3 className="text-sm font-bold text-[var(--text-main)] leading-tight">{evt.headline}</h3>
-                            <span className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded ${
-                              evt.status === 'active' ? 'bg-[#3b82f615] text-[#3b82f6] border border-[#3b82f630]' :
-                              evt.status === 'draft' ? 'bg-[var(--bg-card)] text-[var(--text-muted)] border border-[var(--border-subtle)]' :
-                              evt.status === 'cancelled' ? 'bg-[#f2364515] text-[var(--down-color)] border border-[var(--down-color)]' :
-                              'bg-[#08998115] text-[var(--up-color)] border border-[#08998130]'
-                            }`}>
-                              {evt.status}
-                            </span>
-                          </div>
-                          
-                          <div className="flex flex-wrap gap-2 mt-3 text-[10px] font-mono">
-                            {Object.entries(evt.stockImpacts || {}).map(([tkr, pct]: any) => (
-                              <span key={tkr} className={`px-1.5 py-0.5 rounded border ${pct >= 0 ? 'border-[var(--up-color)] text-[var(--up-color)] bg-[#08998115]' : 'border-[var(--down-color)] text-[var(--down-color)] bg-[#f2364515]'}`}>
-                                {tkr}: {pct > 0 ? '+' : ''}{pct}%
-                              </span>
-                            ))}
-                          </div>
-
-                          <div className="flex gap-2 mt-4 pt-3 border-t border-[var(--border-subtle)]">
-                            <button 
-                              onClick={() => handleFireNews(evt)}
-                              disabled={evt.status === 'active' || evt.status === 'completed' || processingAction === `fire-${evt.id}`}
-                              className="px-4 py-1.5 bg-[#3b82f6] hover:opacity-90 disabled:opacity-50 text-white text-[10px] font-bold uppercase rounded flex items-center gap-1.5 w-24 justify-center transition-opacity"
+                            <button
+                              type="button"
+                              onClick={handleAddImpact}
+                              className="px-4 py-1.5 bg-[var(--border-subtle)] hover:bg-[var(--text-muted)] hover:text-black text-[var(--text-main)] text-[10px] font-bold uppercase rounded transition-colors flex-shrink-0 cursor-pointer"
                             >
-                              {processingAction === `fire-${evt.id}` ? (
-                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              ) : (
-                                <><Send className="w-3 h-3" /> Fire Now</>
-                              )}
-                            </button>
-                            <button 
-                              onClick={() => handleCancelNews(evt.id)}
-                              disabled={evt.status === 'cancelled' || processingAction === `cancel-${evt.id}`}
-                              className="px-3 py-1.5 bg-[var(--bg-card)] hover:bg-[var(--bg-root)] disabled:opacity-50 text-[var(--text-muted)] border border-[var(--border-subtle)] text-[10px] font-bold uppercase rounded flex items-center justify-center w-20 transition-colors"
-                            >
-                              {processingAction === `cancel-${evt.id}` ? <div className="w-3 h-3 border-2 border-[var(--text-muted)] border-t-transparent rounded-full animate-spin" /> : 'Cancel'}
+                              Add
                             </button>
                           </div>
                         </div>
-                      ))}
+
+                        {/* List of Active Impacts */}
+                        {Object.keys(singleImpacts).length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {Object.entries(singleImpacts).map(([tkr, val]) => (
+                              <span
+                                key={tkr}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${
+                                  val >= 0
+                                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                                    : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                                }`}
+                              >
+                                <span>{tkr}: {val >= 0 ? "+" : ""}{val}%</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveImpact(tkr)}
+                                  className="hover:opacity-80"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[9px] text-[var(--text-muted)] font-mono italic">
+                            Optional: Add price movement on specific stocks, or leave empty for general macro news.
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">
+                          Impact Duration (Mins)
+                        </label>
+                        <input
+                          type="number"
+                          value={singleDuration}
+                          onChange={(e) => setSingleDuration(parseInt(e.target.value) || 15)}
+                          className="w-16 px-2 py-1 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#3b82f6]"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={processingAction === "create-single-news"}
+                        className="w-full py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white text-[11px] font-bold uppercase rounded flex items-center justify-center gap-2 transition-all shadow-md"
+                      >
+                        {processingAction === "create-single-news" ? (
+                          <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Plus className="w-3.5 h-3.5" />
+                        )}
+                        <span>Queue Single Event (Draft)</span>
+                      </button>
+                    </form>
+                  )}
+
+                  {/* MODE 2: BULK CSV IMPORTER */}
+                  {newsInputMode === "bulk" && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
+                        <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)]">
+                          Bulk CSV Import
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={downloadSampleNewsCSV}
+                          className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-400 hover:text-amber-300 px-2 py-0.5 rounded bg-amber-400/10 border border-amber-400/25 transition-colors"
+                          title="Download sample news CSV"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Sample CSV</span>
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] font-mono bg-[var(--bg-root)] p-2.5 rounded border border-[var(--border-subtle)] gap-2">
+                        <div className="leading-relaxed">
+                          Format: <span className="text-[var(--text-main)] font-bold">Headline,TICKER1,TICKER2...</span><br/>
+                          Values: % impacts (e.g. +4.5 or -3.2).
+                        </div>
+                        <button
+                          type="button"
+                          onClick={downloadSampleNewsCSV}
+                          className="px-2 py-1 bg-amber-400 hover:bg-amber-300 text-black font-mono font-bold text-[10px] uppercase rounded flex items-center gap-1 transition-colors flex-shrink-0"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Download</span>
+                        </button>
+                      </div>
+
+                      {!csvText ? (
+                        <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-[var(--border-subtle)] border-dashed rounded cursor-pointer bg-[var(--bg-root)] hover:opacity-80 transition-colors">
+                          <Upload className="w-5 h-5 mb-1 text-[var(--text-muted)]" />
+                          <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-widest">
+                            Click to upload CSV file
+                          </p>
+                          <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+                        </label>
+                      ) : (
+                        <textarea
+                          value={csvText}
+                          onChange={(e) => setCsvText(e.target.value)}
+                          className="w-full h-28 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs font-mono rounded focus:outline-none focus:border-[#3b82f6]"
+                        />
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">
+                          Impact Duration (Mins)
+                        </label>
+                        <input
+                          type="number"
+                          value={eventDuration}
+                          onChange={(e) => setEventDuration(parseInt(e.target.value) || 15)}
+                          className="w-16 px-2 py-1 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#3b82f6]"
+                        />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => parseCSV("news")}
+                          disabled={!csvText}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] hover:bg-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] text-[11px] font-bold uppercase rounded transition-colors"
+                        >
+                          <Upload className="w-3.5 h-3.5" /> Validate CSV
+                        </button>
+                        {csvText && (
+                          <button
+                            type="button"
+                            onClick={clearCSV}
+                            className="px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--down-color)] hover:opacity-80 rounded text-xs font-bold"
+                            title="Clear"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      {csvErrors.length > 0 && (
+                        <div className="p-3 bg-[#f2364515] border border-[var(--down-color)] rounded mt-2">
+                          <ul className="list-disc pl-4 text-[10px] text-[var(--down-color)]">
+                            {csvErrors.map((err, i) => (
+                              <li key={i}>{err}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {parsedData.length > 0 && csvType === "news" && (
+                        <div className="mt-3 border-t border-[var(--border-subtle)] pt-3">
+                          <h3 className="text-xs font-bold text-[var(--text-main)] mb-2 font-mono">
+                            Preview ({parsedData.length} Events Validated)
+                          </h3>
+                          <button
+                            type="button"
+                            onClick={handleImportData}
+                            disabled={processingAction === "import"}
+                            className="w-full py-2 bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[11px] font-bold uppercase rounded flex items-center justify-center gap-2 transition-all shadow-sm"
+                          >
+                            {processingAction === "import" ? (
+                              <div className="w-3.5 h-3.5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <Upload className="w-3.5 h-3.5" />
+                            )}
+                            <span>Import All to Queue (Draft)</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
+
+                </div>
+
+                {/* RIGHT COLUMN: EVENT QUEUE & TELEMETRY */}
+                <div className="lg:col-span-2 terminal-card overflow-hidden flex flex-col">
+                  
+                  {/* Queue Control Header */}
+                  <div className="p-4 border-b border-[var(--border-subtle)] bg-[var(--bg-root)] flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)] flex items-center gap-2">
+                        <span>Event Queue & Live Wire</span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-amber-400/20 text-amber-400 border border-amber-400/30">
+                          {adminEvents.filter(e => e.status === "draft").length} Drafts
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                          {adminEvents.filter(e => e.status === "active").length} Active
+                        </span>
+                      </h2>
+                    </div>
+
+                    {/* Batch Trigger & Wipe Actions */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Trigger Next in Queue */}
+                      <button
+                        type="button"
+                        onClick={handleTriggerNextNews}
+                        disabled={adminEvents.filter(e => e.status === "draft").length === 0 || processingAction === "trigger-next-news"}
+                        className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 disabled:opacity-40 text-black rounded text-[10px] font-mono font-black uppercase flex items-center gap-1.5 transition-all shadow-sm"
+                        title="Trigger the next queued draft news story on the wire"
+                      >
+                        {processingAction === "trigger-next-news" ? (
+                          <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Zap className="w-3.5 h-3.5 fill-black" />
+                        )}
+                        <span>Trigger Next</span>
+                      </button>
+
+                      {/* Trigger All Queued */}
+                      {adminEvents.filter(e => e.status === "draft").length > 1 && (
+                        <button
+                          type="button"
+                          onClick={handleTriggerAllNews}
+                          disabled={processingAction === "trigger-all-news"}
+                          className="px-3 py-1.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-40 text-white rounded text-[10px] font-mono font-bold uppercase flex items-center gap-1.5 transition-all shadow-sm"
+                          title="Trigger all queued drafts at once"
+                        >
+                          {processingAction === "trigger-all-news" ? (
+                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Send className="w-3.5 h-3.5" />
+                          )}
+                          <span>Trigger All ({adminEvents.filter(e => e.status === "draft").length})</span>
+                        </button>
+                      )}
+
+                      {/* Delete All News */}
+                      {adminEvents.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleDeleteAllNews}
+                          disabled={processingAction === "delete-all-news"}
+                          className="px-2.5 py-1.5 bg-[#f2364515] border border-[var(--down-color)] text-[var(--down-color)] hover:bg-[var(--down-color)] hover:text-white rounded text-[10px] font-mono font-bold uppercase flex items-center gap-1 transition-colors disabled:opacity-50"
+                          title="Permanently delete all news events"
+                        >
+                          {processingAction === "delete-all-news" ? (
+                            <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3 h-3" />
+                          )}
+                          <span>Wipe All</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Event Queue List */}
+                  {adminEvents.length === 0 ? (
+                    <div className="p-8 flex flex-col items-center justify-center text-[var(--text-muted)] py-16">
+                      <Newspaper className="w-10 h-10 mb-2 opacity-30" />
+                      <p className="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                        Event Queue is Empty
+                      </p>
+                      <p className="text-[10px] text-[var(--text-muted)] font-mono mt-1 text-center max-w-sm">
+                        Use the single composer on the left or upload a bulk CSV to add draft news into the queue.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="p-4 space-y-3 max-h-[600px] overflow-y-auto">
+                      {adminEvents.map((evt, idx) => {
+                        const isDraft = evt.status === "draft";
+                        const isActive = evt.status === "active";
+
+                        return (
+                          <div
+                            key={evt.id}
+                            className={`p-4 rounded-xl border transition-all ${
+                              isActive
+                                ? "bg-[#3b82f608] border-[#3b82f650] shadow-sm"
+                                : isDraft
+                                ? "bg-[var(--bg-root)] border-[var(--border-subtle)] hover:border-amber-400/40"
+                                : "bg-[var(--bg-root)] border-[var(--border-subtle)] opacity-70"
+                            }`}
+                          >
+                            <div className="flex justify-between items-start gap-3 mb-2">
+                              <div className="flex items-start gap-2">
+                                <span className="text-[10px] font-mono text-[var(--text-muted)] font-bold mt-0.5">
+                                  #{idx + 1}
+                                </span>
+                                <h3 className="text-xs sm:text-sm font-bold text-[var(--text-main)] leading-snug">
+                                  {evt.headline}
+                                </h3>
+                              </div>
+
+                              {/* Status Badge */}
+                              <span
+                                className={`px-2 py-0.5 text-[9px] font-mono font-bold uppercase rounded flex items-center gap-1 flex-shrink-0 ${
+                                  isActive
+                                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                                    : isDraft
+                                    ? "bg-amber-400/15 text-amber-300 border border-amber-400/30"
+                                    : evt.status === "cancelled"
+                                    ? "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                                    : "bg-zinc-800 text-zinc-400 border border-zinc-700"
+                                }`}
+                              >
+                                {isActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />}
+                                <span>{isActive ? "LIVE ON WIRE" : isDraft ? "QUEUED DRAFT" : evt.status}</span>
+                              </span>
+                            </div>
+
+                            {/* Stock Impacts Chips */}
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2.5 text-[10px] font-mono">
+                              <span className="text-[9px] text-[var(--text-muted)] uppercase">Impacts:</span>
+                              {Object.keys(evt.stockImpacts || {}).length > 0 ? (
+                                Object.entries(evt.stockImpacts || {}).map(([tkr, pct]: any) => (
+                                  <span
+                                    key={tkr}
+                                    className={`px-1.5 py-0.5 rounded border ${
+                                      pct >= 0
+                                        ? "border-[var(--up-color)] text-[var(--up-color)] bg-[#08998115]"
+                                        : "border-[var(--down-color)] text-[var(--down-color)] bg-[#f2364515]"
+                                    }`}
+                                  >
+                                    {tkr}: {pct > 0 ? "+" : ""}{pct}%
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[var(--text-muted)] italic">Macro (General)</span>
+                              )}
+                              <span className="text-[9px] text-[var(--text-muted)] ml-auto">
+                                Duration: {evt.durationMinutes || 15}m
+                              </span>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex items-center justify-between mt-3 pt-3 border-t border-[var(--border-subtle)] font-mono text-[10px]">
+                              <span className="text-[9px] text-[var(--text-muted)]">
+                                {isDraft
+                                  ? "Created: " + new Date(evt.createdAt || Date.now()).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+                                  : "Fired: " + new Date(evt.startTime || evt.createdAt || Date.now()).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+
+                              <div className="flex items-center gap-2">
+                                {isDraft && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleFireNews(evt)}
+                                      disabled={processingAction === `fire-${evt.id}`}
+                                      className="px-3 py-1 bg-amber-400 hover:bg-amber-300 text-black font-bold uppercase rounded flex items-center gap-1 transition-all shadow-sm"
+                                      title="Trigger this event now"
+                                    >
+                                      {processingAction === `fire-${evt.id}` ? (
+                                        <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                                      ) : (
+                                        <Zap className="w-3 h-3 fill-black" />
+                                      )}
+                                      <span>Trigger Event</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteSingleNews(evt.id, evt.headline)}
+                                      disabled={processingAction === `delete-${evt.id}`}
+                                      className="p-1 text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                                      title="Delete draft from queue"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                )}
+
+                                {isActive && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelNews(evt.id)}
+                                    disabled={processingAction === `cancel-${evt.id}`}
+                                    className="px-2.5 py-1 bg-[var(--bg-card)] hover:bg-[var(--bg-root)] text-[var(--text-muted)] hover:text-white border border-[var(--border-subtle)] text-[9px] font-bold uppercase rounded flex items-center gap-1 transition-colors"
+                                  >
+                                    {processingAction === `cancel-${evt.id}` ? (
+                                      <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                    ) : (
+                                      "Halt / Cancel"
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                 </div>
               </div>
             </div>
@@ -938,7 +1571,7 @@ export default function AdminDashboard() {
                 <div className="xl:col-span-1 terminal-card p-5 space-y-4 h-fit">
                   <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)] border-b border-[var(--border-subtle)] pb-2">Schedule Offering</h2>
                   <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div className="col-span-1">
                         <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Company Name</label>
                         <input type="text" value={ipoName} onChange={(e) => setIpoName(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Quantum AI" />
@@ -949,7 +1582,7 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <div className="col-span-1">
                         <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Price per Share</label>
                         <input type="number" value={ipoPrice} onChange={(e) => setIpoPrice(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="₹" />
@@ -1004,6 +1637,7 @@ export default function AdminDashboard() {
                         <th className="p-3">Ticker</th>
                         <th className="p-3 text-right">Price/Lot</th>
                         <th className="p-3 text-right">Hike (GMP)</th>
+                        <th className="p-3 text-right">Subscription</th>
                         <th className="p-3 text-center">Status</th>
                         <th className="p-3 text-right">Manual Override</th>
                       </tr>
@@ -1011,13 +1645,62 @@ export default function AdminDashboard() {
                     <tbody className="divide-y divide-[var(--border-subtle)]">
                       {ipos.map(ipo => {
                         const costPerLot = (Number(ipo.price) || 0) * (Number(ipo.lotSize) || 1);
+                        const subRate = ipo.subscriptionRate !== undefined ? Number(ipo.subscriptionRate) : Number(((Number(ipo.totalSubscribedLots) || 0) / (Number(ipo.totalLots) || 1)).toFixed(2));
                         return (
                           <tr key={ipo.id} className="hover:bg-[var(--bg-root)] transition-colors">
                             <td className="p-3 text-[var(--text-main)] font-bold">
                               {ipo.ticker} <span className="block text-[9px] font-normal text-[var(--text-muted)]">{ipo.lotSize} shares/lot</span>
                             </td>
                             <td className="p-3 text-right text-[var(--text-main)]">₹{costPerLot.toFixed(2)}</td>
-                            <td className="p-3 text-right text-[var(--up-color)]">+{ipo.listingPremiumPct || 0}%</td>
+                            <td className="p-3 text-right">
+                              {editingGmpId === ipo.id ? (
+                                <div className="flex items-center justify-end gap-1 font-mono">
+                                  <input 
+                                    type="number"
+                                    value={gmpValue}
+                                    onChange={(e) => setGmpValue(e.target.value)}
+                                    className="w-16 px-1.5 py-0.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-right text-xs text-[var(--up-color)] font-bold focus:outline-none"
+                                    placeholder={`${ipo.listingPremiumPct || 0}`}
+                                    autoFocus
+                                  />
+                                  <span className="text-[10px] text-[var(--text-muted)]">%</span>
+                                  <button
+                                    onClick={() => handleUpdateIPOGMP(ipo.id, ipo.ticker)}
+                                    disabled={processingAction === `${ipo.id}-gmp`}
+                                    className="px-1.5 py-0.5 bg-[var(--up-color)] text-white text-[10px] rounded font-bold hover:opacity-90"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingGmpId(null)}
+                                    className="px-1.5 py-0.5 bg-[var(--bg-root)] text-[var(--text-muted)] text-[10px] rounded border border-[var(--border-subtle)]"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-end gap-1.5 group">
+                                  <span className={`font-bold ${Number(ipo.listingPremiumPct || 0) >= 0 ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
+                                    {Number(ipo.listingPremiumPct || 0) >= 0 ? '+' : ''}{ipo.listingPremiumPct || 0}%
+                                  </span>
+                                  <button
+                                    onClick={() => { setEditingGmpId(ipo.id); setGmpValue(String(ipo.listingPremiumPct || 0)); }}
+                                    className="opacity-40 group-hover:opacity-100 p-1 text-[var(--text-muted)] hover:text-amber-400 text-[10px] rounded transition-opacity"
+                                    title="Edit GMP"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3 text-right">
+                              <div className={`font-bold ${subRate >= 1.0 ? 'text-[var(--up-color)]' : subRate > 0 ? 'text-[#3b82f6]' : 'text-[var(--text-muted)]'}`}>
+                                {subRate.toFixed(2)}x
+                              </div>
+                              <div className="text-[9px] text-[var(--text-muted)]">
+                                {ipo.totalSubscribedLots || 0}/{ipo.totalLots || 1} lots ({ipo.subscriptionCount || 0} bids)
+                              </div>
+                            </td>
                             <td className="p-3 text-center">
                               <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase ${
                                 ipo.status === 'upcoming' ? 'bg-[#f59e0b15] text-[#f59e0b]' :

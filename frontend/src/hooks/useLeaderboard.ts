@@ -8,6 +8,8 @@ export interface LeaderboardEntry {
   displayName: string;
   portfolioValue: number;
   returnPct: number;
+  pnl?: number;
+  pnlAmount?: number;
 }
 
 export function useLeaderboard() {

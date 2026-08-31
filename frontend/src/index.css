@@ -11,11 +11,11 @@
 }
 
 .dark {
-  --bg-root: #0b0e14;
-  --bg-card: #131722;
-  --border-subtle: #2a2e39;
-  --text-main: #d1d4dc;
-  --text-muted: #787b86;
+  --bg-root: #000000;
+  --bg-card: #09090b;
+  --border-subtle: #18181b;
+  --text-main: #f4f4f5;
+  --text-muted: #71717a;
   --up-color: #089981;
   --down-color: #f23645;
 }
@@ -58,4 +58,12 @@ body {
 .terminal-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   letter-spacing: -0.025em;
+}
+
+@keyframes toastProgress {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+.animate-toast-progress {
+  animation: toastProgress 6s linear forwards;
 }

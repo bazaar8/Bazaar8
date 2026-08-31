@@ -123,9 +123,13 @@ export default function Orders() {
                         )}
                       </td>
                       <td className="p-3 text-right">
-                        {o.taxDeducted ? (
+                        {o.taxDeducted !== undefined && Number(o.taxDeducted) > 0 ? (
                           <span className="text-amber-400 font-mono font-bold text-[11px]">
-                            ₹{o.taxDeducted.toFixed(2)}
+                            ₹{Number(o.taxDeducted).toFixed(2)}
+                          </span>
+                        ) : o.priceAtExecution && o.quantity ? (
+                          <span className="text-amber-400 font-mono font-bold text-[11px]">
+                            ₹{(Number(o.priceAtExecution) * Number(o.quantity) * 0.001).toFixed(2)}
                           </span>
                         ) : (
                           <span className="text-[var(--text-muted)] text-[10px]">—</span>

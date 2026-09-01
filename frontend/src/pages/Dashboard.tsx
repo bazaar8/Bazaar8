@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 import { useLivePrices } from "../hooks/useLivePrices";
 import { useUserTradingData } from "../hooks/useUserTradingData";
 import { STOCKS_CATALOG } from "../data/stocksData";
-import { collection, query, onSnapshot } from "firebase/firestore";
-import { db } from "../config/firebase";
+import { API_URL } from "../config/api";
+import { socket } from "../config/socket";
 import { 
   Flame, 
   Newspaper, 
@@ -24,17 +24,34 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [animatedCash, setAnimatedCash] = useState(0);
 
-  // Real-time news listener for homepage - only show active or completed events (NEVER drafts)
+  // REST API + WebSocket Listener for News
   useEffect(() => {
-    const q = query(collection(db, "newsEvents"));
-    const unsub = onSnapshot(q, (snap) => {
-      const activeNews = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter((evt: any) => evt.status === 'active' || evt.status === 'completed')
-        .sort((a: any, b: any) => (b.startTime || b.createdAt || 0) - (a.startTime || a.createdAt || 0));
-      setNewsEvents(activeNews);
-    });
-    return () => unsub();
+    const fetchNews = async () => {
+      try {
+        const token = localStorage.getItem("bazaar_jwt_token");
+        const res = await fetch(`${API_URL}/news`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const json = await res.json();
+        if (json.data) {
+          const activeNews = json.data
+            .filter((evt: any) => evt.status === 'active' || evt.status === 'completed')
+            .sort((a: any, b: any) => (b.startTime || b.createdAt || 0) - (a.startTime || a.createdAt || 0));
+          setNewsEvents(activeNews);
+        }
+      } catch (err) {
+        console.error("Failed to fetch news:", err);
+      }
+    };
+
+    fetchNews();
+
+    const handleNewsUpdate = () => fetchNews();
+    socket.on("newsUpdate", handleNewsUpdate);
+
+    return () => {
+      socket.off("newsUpdate", handleNewsUpdate);
+    };
   }, []);
 
   const allMarkets = useMemo(() => {
@@ -73,11 +90,10 @@ export default function Dashboard() {
       return;
     }
     let startTimestamp: number | null = null;
-    const duration = 1200; // 1.2s smooth roll-up
+    const duration = 1200; 
     const step = (timestamp: number) => {
       if (!startTimestamp) startTimestamp = timestamp;
       const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-      // Ease out cubic
       const easeOut = 1 - Math.pow(1 - progress, 3);
       setAnimatedCash(Math.floor(easeOut * safeCash));
       if (progress < 1) {
@@ -90,12 +106,10 @@ export default function Dashboard() {
     return () => cancelAnimationFrame(animId);
   }, [safeCash]);
 
-  // Market Movers
   const topGainers = [...allMarkets].sort((a, b) => b.changePct - a.changePct).slice(0, 5);
   const topLosers = [...allMarkets].sort((a, b) => a.changePct - b.changePct).slice(0, 5);
   const displayMovers = showGainers ? topGainers : topLosers;
 
-  // Search filter
   const filteredStocks = searchQuery.trim() 
     ? allMarkets.filter(s => s.ticker.toLowerCase().includes(searchQuery.toLowerCase()) || s.name.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 6)
     : [];
@@ -103,7 +117,6 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col gap-5 max-w-7xl mx-auto w-full pb-10">
       
-      {/* 1. SEARCH BAR AT THE VERY TOP */}
       <div className="flex flex-col gap-2">
         <div className="relative">
           <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-3" />
@@ -132,10 +145,8 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* 2. AVAILABLE CASH WITH REAL MONEY ANIMATION & SHIMMER */}
       <div className="relative overflow-hidden terminal-card bg-gradient-to-r from-[var(--bg-card)] via-[#0899810a] to-[var(--bg-card)] border border-[var(--up-color)]/30 p-5 sm:p-6 rounded-2xl shadow-[0_0_35px_rgba(8,153,129,0.12)]">
         
-        {/* Animated Money Ambient Glow */}
         <div className="absolute top-0 right-0 w-64 h-64 bg-[var(--up-color)]/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -153,7 +164,6 @@ export default function Dashboard() {
                 </span>
               </div>
 
-              {/* Animated Money Counter without blinking */}
               <div className="text-3xl sm:text-4xl lg:text-5xl font-mono font-black text-[var(--up-color)] mt-1 tracking-tight">
                 ₹{animatedCash.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
@@ -188,7 +198,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 3. QUICK CHECK FOR OPEN POSITIONS */}
       <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-5 rounded-2xl">
         <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 mb-4">
           <div className="flex items-center gap-2">
@@ -287,10 +296,8 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* 4. TWO COLUMNS: Market Movers (Left) & Simple News (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         
-        {/* MARKET MOVERS */}
         <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-5 rounded-2xl flex flex-col">
           <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 mb-3">
             <div className="flex items-center gap-2">
@@ -355,7 +362,6 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        {/* NEWS (Simple, Clean, Directly on Homepage) */}
         <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-5 rounded-2xl flex flex-col">
           <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3 mb-3">
             <div className="flex items-center gap-2">
@@ -377,7 +383,7 @@ export default function Dashboard() {
             ) : (
               newsEvents.map(item => {
                 return (
-                  <div key={item.id} className="p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded-xl flex flex-col gap-1.5">
+                  <div key={item.eventId || item._id} className="p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded-xl flex flex-col gap-1.5">
                     <div className="flex items-center justify-between text-[11px] font-mono">
                       <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-500/15 text-blue-400 border border-blue-500/20">
                         BREAKING
@@ -413,7 +419,6 @@ export default function Dashboard() {
 
       </div>
 
-      {/* 3 CUSTOM TRADER WISHLISTS (At Bottom of Dashboard) */}
       <DashboardWishlists prices={prices} />
 
     </div>

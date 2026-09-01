@@ -1,30 +1,33 @@
 import { useState, useEffect } from 'react';
-import { ref, onValue } from 'firebase/database';
-import { rtdb } from '../config/firebase';
+import { socket } from '../config/socket';
+import { API_URL } from '../config/api';
 
 export function useLivePrices() {
-  const [prices, setPrices] = useState<Record<string, { price: number, timestamp: number }>>({});
+  const [prices, setPrices] = useState<Record<string, any>>({});
   const [marketStatus, setMarketStatus] = useState<string>("CLOSED");
 
   useEffect(() => {
-    const pricesRef = ref(rtdb, 'livePrices');
-    const statusRef = ref(rtdb, 'marketStatus/state');
+    // Initial fetch
+    fetch(`${API_URL}/state`)
+      .then(res => res.json())
+      .then(json => {
+        if (json.data) {
+          if (json.data.livePrices) setPrices(json.data.livePrices);
+          if (json.data.marketStatus) setMarketStatus(json.data.marketStatus);
+        }
+      })
+      .catch(() => {});
 
-    const unsubscribePrices = onValue(pricesRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setPrices(snapshot.val());
-      }
-    });
+    // Live socket stream (0ms delay)
+    const handleLivePrices = (data: { prices: Record<string, any>, marketStatus: string }) => {
+      if (data.prices) setPrices(data.prices);
+      if (data.marketStatus) setMarketStatus(data.marketStatus);
+    };
 
-    const unsubscribeStatus = onValue(statusRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setMarketStatus(snapshot.val());
-      }
-    });
+    socket.on("livePrices", handleLivePrices);
 
     return () => {
-      unsubscribePrices();
-      unsubscribeStatus();
+      socket.off("livePrices", handleLivePrices);
     };
   }, []);
 

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
-import { doc, getDoc, setDoc } from "firebase/firestore";
-import { db } from "../config/firebase";
+import { API_URL } from "../config/api";
 
 export interface Wishlist {
   id: number;
@@ -32,7 +31,7 @@ export function useWishlists() {
 
   const [activeWishlistId, setActiveWishlistId] = useState<number>(1);
 
-  // Sync to Firestore & localStorage
+  // Sync to Backend & localStorage
   const persistWishlists = useCallback((updated: Wishlist[]) => {
     setWishlists(updated);
     try {
@@ -43,10 +42,15 @@ export function useWishlists() {
     window.dispatchEvent(new Event("wishlists_updated"));
 
     if (user?.uid) {
-      setDoc(doc(db, "users", user.uid, "settings", "watchlists_v2"), {
-        wishlists: updated,
-        updatedAt: Date.now()
-      }, { merge: true }).catch(() => {});
+      const token = localStorage.getItem("bazaar_jwt_token");
+      fetch(`${API_URL}/wishlists/sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ data: { wishlists: updated } })
+      }).catch(() => {});
     }
   }, [storageKey, user?.uid]);
 
@@ -61,7 +65,6 @@ export function useWishlists() {
         }
       } catch (e) {}
     };
-
     window.addEventListener("wishlists_updated", handleSync);
     window.addEventListener("storage", handleSync);
     return () => {
@@ -70,21 +73,26 @@ export function useWishlists() {
     };
   }, [storageKey]);
 
-  // Load from Firestore on initial mount if available
+  // Load from Backend on initial mount if available
   useEffect(() => {
     if (!user?.uid) return;
-    const loadFromFirestore = async () => {
+    const loadFromDatabase = async () => {
       try {
-        const snap = await getDoc(doc(db, "users", user.uid, "settings", "watchlists_v2"));
-        if (snap.exists() && Array.isArray(snap.data()?.wishlists) && snap.data().wishlists.length === 3) {
-          setWishlists(snap.data().wishlists);
+        const token = localStorage.getItem("bazaar_jwt_token");
+        const res = await fetch(`${API_URL}/wishlists`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const json = await res.json();
+        
+        if (json.data && Array.isArray(json.data.wishlists) && json.data.wishlists.length === 3) {
+          setWishlists(json.data.wishlists);
           try {
-            localStorage.setItem(storageKey, JSON.stringify(snap.data().wishlists));
+            localStorage.setItem(storageKey, JSON.stringify(json.data.wishlists));
           } catch (e) {}
         }
       } catch (e) {}
     };
-    loadFromFirestore();
+    loadFromDatabase();
   }, [user?.uid, storageKey]);
 
   const addStock = (ticker: string, wishlistId: number = activeWishlistId) => {

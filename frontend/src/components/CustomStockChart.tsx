@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ref, onValue, query, limitToLast } from "firebase/database";
-import { rtdb } from "../config/firebase";
+import { API_URL } from "../config/api";
 
 interface CustomStockChartProps {
   ticker: string;
@@ -14,24 +13,54 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
   const [hoverData, setHoverData] = useState<{ time: string; price: number; x: number; y: number } | null>(null);
 
   useEffect(() => {
-    const historyRef = query(ref(rtdb, `priceHistory/${ticker}`), limitToLast(60));
-    const unsub = onValue(historyRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.val();
-        const parsed = Object.keys(data).map(ts => ({
-          timestamp: parseInt(ts, 10),
-          time: new Date(parseInt(ts, 10)).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          price: data[ts]
-        })).sort((a, b) => a.timestamp - b.timestamp);
-        setHistory(parsed);
-      } else {
-         setHistory([{ 
-           time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }), 
-           price: basePrice 
-         }]);
+    const fetchHistory = async () => {
+      try {
+        const token = localStorage.getItem("bazaar_jwt_token");
+        const res = await fetch(`${API_URL}/history/${ticker}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const json = await res.json();
+        
+        let parsed: { timestamp: number; time: string; price: number }[] = [];
+        
+        if (json.data) {
+          if (Array.isArray(json.data)) {
+            parsed = json.data.map((d: any) => ({
+              timestamp: parseInt(d.timestamp || d.ts, 10),
+              time: new Date(parseInt(d.timestamp || d.ts, 10)).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+              price: Number(d.price)
+            }));
+          } else {
+            parsed = Object.keys(json.data).map(ts => ({
+              timestamp: parseInt(ts, 10),
+              time: new Date(parseInt(ts, 10)).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+              price: Number(json.data[ts])
+            }));
+          }
+        }
+
+        if (parsed.length > 0) {
+          parsed.sort((a, b) => a.timestamp - b.timestamp);
+          if (parsed.length > 60) parsed = parsed.slice(parsed.length - 60);
+          setHistory(parsed);
+          return;
+        }
+
+        setHistory([{ 
+          time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }), 
+          price: basePrice 
+        }]);
+      } catch (err) {
+        setHistory([{ 
+          time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }), 
+          price: basePrice 
+        }]);
       }
-    });
-    return () => unsub();
+    };
+
+    fetchHistory();
+    const interval = setInterval(fetchHistory, 60000);
+    return () => clearInterval(interval);
   }, [ticker, basePrice]);
 
   useEffect(() => {
@@ -226,7 +255,7 @@ export default function CustomStockChart({ ticker, basePrice, currentPrice }: Cu
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-[var(--up-color)]">
           <span className="w-2 h-2 rounded-full bg-[var(--up-color)] animate-pulse"></span>
-          <span>INTERNAL RTDB SYNC</span>
+          <span>LIVE SOCKET SYNC</span>
         </div>
       </div>
       <div className="relative flex-1 w-full min-h-[380px]">

@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
-import { collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, arrayUnion, arrayRemove } from "firebase/firestore";
-import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
+import { API_URL } from "../config/api";
 
 export interface Watchlist {
   id: string;
@@ -15,25 +14,43 @@ export function useWatchlists() {
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!user) {
+  const fetchWatchlists = async () => {
+    if (!user?.uid) {
       setLoading(false);
       return;
     }
-    const colRef = collection(db, "users", user.uid, "watchlists");
-    const unsub = onSnapshot(colRef, (snap) => {
-      const lists: Watchlist[] = [];
-      snap.forEach(d => {
-        lists.push({ id: d.id, ...d.data() } as Watchlist);
+    try {
+      const token = localStorage.getItem("bazaar_jwt_token");
+      const res = await fetch(`${API_URL}/watchlists`, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-      setWatchlists(lists.sort((a, b) => a.createdAt - b.createdAt));
+      const json = await res.json();
+      if (json.data) {
+        setWatchlists(json.data.sort((a: Watchlist, b: Watchlist) => a.createdAt - b.createdAt));
+      }
+    } catch (error) {
+      console.warn("Watchlists restricted or failed to load:", error);
+    } finally {
       setLoading(false);
-    }, (error) => {
-      console.warn("Watchlists restricted:", error);
-      setLoading(false); 
+    }
+  };
+
+  useEffect(() => {
+    fetchWatchlists();
+  }, [user?.uid]);
+
+  const apiCall = async (endpoint: string, payload: any) => {
+    const token = localStorage.getItem("bazaar_jwt_token");
+    await fetch(`${API_URL}/watchlists/${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ data: payload })
     });
-    return () => unsub();
-  }, [user]);
+    await fetchWatchlists(); // Refresh state to reflect the update
+  };
 
   const createWatchlist = async (name: string) => {
     if (!user || !name.trim()) return;
@@ -41,31 +58,27 @@ export function useWatchlists() {
       alert("Maximum 3 watchlists allowed. Please delete or rename an existing list.");
       return;
     }
-    await addDoc(collection(db, "users", user.uid, "watchlists"), {
-      name: name.trim(),
-      tickers: [],
-      createdAt: Date.now()
-    });
+    await apiCall("create", { name: name.trim() });
   };
 
   const renameWatchlist = async (id: string, name: string) => {
     if (!user || !name.trim()) return;
-    await updateDoc(doc(db, "users", user.uid, "watchlists", id), { name: name.trim() });
+    await apiCall("rename", { id, name: name.trim() });
   };
 
   const deleteWatchlist = async (id: string) => {
     if (!user) return;
-    await deleteDoc(doc(db, "users", user.uid, "watchlists", id));
+    await apiCall("delete", { id });
   };
 
   const addStock = async (id: string, ticker: string) => {
     if (!user) return;
-    await updateDoc(doc(db, "users", user.uid, "watchlists", id), { tickers: arrayUnion(ticker) });
+    await apiCall("addStock", { id, ticker });
   };
 
   const removeStock = async (id: string, ticker: string) => {
     if (!user) return;
-    await updateDoc(doc(db, "users", user.uid, "watchlists", id), { tickers: arrayRemove(ticker) });
+    await apiCall("removeStock", { id, ticker });
   };
 
   return { watchlists, loading, createWatchlist, renameWatchlist, deleteWatchlist, addStock, removeStock };

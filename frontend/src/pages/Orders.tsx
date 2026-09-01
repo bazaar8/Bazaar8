@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore";
-import { db } from "../config/firebase";
+import { API_URL } from "../config/api";
+import { socket } from "../config/socket";
 import { useAuth } from "../context/AuthContext";
 import type { Order } from "../types/database";
 import { ListOrdered, Filter, AlertTriangle } from "lucide-react";
@@ -14,27 +14,34 @@ export default function Orders() {
   useEffect(() => {
     if (!user) return;
 
-    const q = query(
-      collection(db, "orders"), 
-      where("uid", "==", user.uid),
-      limit(100) 
-    );
-    
-    const unsub = onSnapshot(q, (snap) => {
-      const ords: Order[] = [];
-      snap.forEach((d) => {
-        ords.push(d.data() as Order);
-      });
-      ords.sort((a, b) => {
-        const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp || 0);
-        const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp || 0);
-        return tB - tA;
-      });
-      setOrders(ords);
-      setLoading(false);
-    });
+    const fetchOrders = async () => {
+      try {
+        const token = localStorage.getItem("bazaar_jwt_token");
+        const res = await fetch(`${API_URL}/orders`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const json = await res.json();
+        if (json.data) {
+          const ords = json.data.sort((a: any, b: any) => b.timestamp - a.timestamp);
+          setOrders(ords);
+        }
+      } catch (err) {
+        console.error("Failed to fetch orders", err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    return () => unsub();
+    fetchOrders();
+
+    // Re-fetch whenever the user's trading state updates
+    const channel = `userUpdate:${user.uid}`;
+    const handleUpdate = () => fetchOrders();
+    socket.on(channel, handleUpdate);
+
+    return () => {
+      socket.off(channel, handleUpdate);
+    };
   }, [user]);
 
   const filtered = orders.filter((o) => filterSide === "ALL" || o.side === filterSide);

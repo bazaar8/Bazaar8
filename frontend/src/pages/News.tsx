@@ -1,23 +1,38 @@
 import { useState, useEffect } from "react";
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
-import { db } from "../config/firebase";
 import { Newspaper, Radio } from "lucide-react";
+import { API_URL } from "../config/api";
+import { socket } from "../config/socket";
 
 export default function News() {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(collection(db, "newsEvents"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => {
-      const activeNews = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((evt: any) => evt.status === 'active' || evt.status === 'completed');
-      
-      setEvents(activeNews);
-      setLoading(false);
-    });
-    return () => unsub();
+    // 1. Initial Fetch
+    const fetchNews = async () => {
+      try {
+        const token = localStorage.getItem("bazaar_jwt_token");
+        const res = await fetch(`${API_URL}/news`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const json = await res.json();
+        const activeNews = (json.data || []).filter((evt: any) => evt.status === 'active' || evt.status === 'completed');
+        setEvents(activeNews);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchNews();
+
+    // 2. Real-time Socket Updates
+    const handleNewsUpdate = () => fetchNews();
+    socket.on("newsUpdate", handleNewsUpdate);
+
+    return () => {
+      socket.off("newsUpdate", handleNewsUpdate);
+    };
   }, []);
 
   return (
@@ -47,7 +62,7 @@ export default function News() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {events.map((n) => (
-            <div key={n.id} className="terminal-card p-4 flex flex-col justify-between group hover:border-[#3b82f6]/50 transition-colors">
+            <div key={n.eventId || n._id} className="terminal-card p-4 flex flex-col justify-between group hover:border-[#3b82f6]/50 transition-colors">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] font-mono text-[var(--text-muted)]">

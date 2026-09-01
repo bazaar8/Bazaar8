@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { collection, query, onSnapshot, doc } from "firebase/firestore";
-import { db } from "../config/firebase";
+import { API_URL } from "../config/api";
 import { useUserTradingData } from "../hooks/useUserTradingData";
 import { useLivePrices } from "../hooks/useLivePrices";
 import { useAuth } from "../context/AuthContext";
@@ -70,43 +69,42 @@ export default function Portfolio() {
   const { prices, marketStatus } = useLivePrices();
   const [blockedIpoFunds, setBlockedIpoFunds] = useState(0);
   const timeframe = "1D";
-  const ipoUnsubs = useRef<(() => void)[]>([]);
 
   useEffect(() => {
     if (!profile?.uid) return;
-    const q = query(collection(db, "ipos"));
-    
-    const unsub = onSnapshot(q, (snap) => {
-       ipoUnsubs.current.forEach(fn => fn());
-       ipoUnsubs.current = [];
-       const activeIpos = snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((i: any) => ['upcoming', 'open', 'closed'].includes(i.status));
-       const currentBlocked: Record<string, number> = {};
-       
-       activeIpos.forEach((ipo: any) => {
-          const subRef = doc(db, "ipos", ipo.id, "subscriptions", profile.uid);
-          const subUnsub = onSnapshot(subRef, (subSnap) => {
-             if (subSnap.exists()) {
-                const subData = subSnap.data() as any;
-                if (!['won', 'lost', 'success', 'refunded'].includes(subData.status)) {
-                   const price = Number(ipo.price) || 0;
-                   const lotSize = Number(ipo.lotSize) || 1;
-                   const reqLots = Number(subData.requestedLots) || Math.max(1, Math.floor((Number(subData.requestedShares) || 1) / lotSize));
-                   currentBlocked[ipo.id] = (reqLots * lotSize * price);
-                } else {
-                   currentBlocked[ipo.id] = 0;
-                }
-             } else {
-                currentBlocked[ipo.id] = 0;
-             }
-             setBlockedIpoFunds(Object.values(currentBlocked).reduce((a, b) => a + b, 0));
+
+    const fetchIpoBlockedFunds = async () => {
+      try {
+        const token = localStorage.getItem("bazaar_jwt_token");
+        const res = await fetch(`${API_URL}/ipos`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const json = await res.json();
+        
+        if (json.data) {
+          const activeIpos = json.data.filter((i: any) => ['upcoming', 'open', 'closed'].includes(i.status));
+          let totalBlocked = 0;
+
+          activeIpos.forEach((ipo: any) => {
+            const mySub = ipo.subscriptions?.find((s: any) => s.uid === profile.uid);
+            if (mySub && !['won', 'lost', 'success', 'refunded'].includes(mySub.status)) {
+              const price = Number(ipo.price) || 0;
+              const lotSize = Number(ipo.lotSize) || 1;
+              const reqLots = Number(mySub.requestedLots) || Math.max(1, Math.floor((Number(mySub.requestedShares) || 1) / lotSize));
+              totalBlocked += (reqLots * lotSize * price);
+            }
           });
-          ipoUnsubs.current.push(subUnsub);
-       });
-    });
-    return () => {
-      unsub();
-      ipoUnsubs.current.forEach(fn => fn());
+          
+          setBlockedIpoFunds(totalBlocked);
+        }
+      } catch (error) {
+        console.error("Failed to fetch IPOs for portfolio", error);
+      }
     };
+
+    fetchIpoBlockedFunds();
+    const interval = setInterval(fetchIpoBlockedFunds, 5000); // Poll for subscription updates
+    return () => clearInterval(interval);
   }, [profile]);
 
   const safeCash = isNaN(Number(cashBalance)) ? 0 : Number(cashBalance);
@@ -164,7 +162,6 @@ export default function Portfolio() {
       const pointTime = new Date(startMs + (i * stepMs));
       const progress = i / (pointsCount - 1);
       
-      // Interpolate from starting benchmark to current valuation with slight realistic market fluctuations
       const noise = (Math.sin(i * 1.3) * 0.15 + Math.cos(i * 0.8) * 0.1) * (1 - progress) * (delta * 0.4);
       let interpVal = safeStarting + (delta * progress) + (i === pointsCount - 1 ? 0 : noise);
       interpVal = Math.round(interpVal * 100) / 100;
@@ -192,7 +189,6 @@ export default function Portfolio() {
     return result;
   }, [timeframe, totalPortfolioValue, safeStarting, longMarketValue]);
 
-  // Telemetry stats
   const athValue = useMemo(() => {
     if (chartData.length === 0) return totalPortfolioValue;
     return Math.max(...chartData.map(d => d.value), totalPortfolioValue);
@@ -302,7 +298,6 @@ export default function Portfolio() {
 
   return (
     <div className="flex flex-col gap-4 lg:gap-6">
-      {/* Header */}
       <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
         <div>
           <h1 className="text-lg font-bold text-[var(--text-main)] tracking-tight">Portfolio & Capital Ledger</h1>
@@ -322,7 +317,6 @@ export default function Portfolio() {
         </div>
       </div>
 
-      {/* Top 4 KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
         <div className="terminal-card p-4">
           <div className="flex justify-between items-center text-[var(--text-muted)] text-[10px] uppercase font-bold mb-1">
@@ -372,7 +366,6 @@ export default function Portfolio() {
         </div>
       </div>
 
-      {/* PROPER PORTFOLIO PERFORMANCE GRAPH */}
       <div className="terminal-card bg-[var(--bg-card)] border border-[var(--border-subtle)] p-4 sm:p-5 flex flex-col">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-4">
           <div>
@@ -391,7 +384,6 @@ export default function Portfolio() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Total value pill */}
             <div className={`px-3 py-1 rounded text-xs font-mono font-bold border ${
               totalPL >= 0 
                 ? "bg-[var(--up-color)]/10 text-[var(--up-color)] border-[var(--up-color)]/30" 
@@ -402,7 +394,6 @@ export default function Portfolio() {
           </div>
         </div>
 
-        {/* Telemetry bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-3 border-b border-[var(--border-subtle)] font-mono text-xs bg-[var(--bg-root)]/50 px-3 rounded mt-3">
           <div>
             <span className="text-[9px] uppercase tracking-wider text-[var(--text-muted)] block">All-Time High</span>
@@ -430,7 +421,6 @@ export default function Portfolio() {
           </div>
         </div>
 
-        {/* Chart Area */}
         <div className="w-full h-[280px] sm:h-[340px] pt-4">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData} margin={{ top: 15, right: 15, left: 5, bottom: 5 }}>
@@ -479,9 +469,7 @@ export default function Portfolio() {
         </div>
       </div>
 
-      {/* Allocation Donut + Recent Executions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        {/* Allocation Donut */}
         <div className="terminal-card p-4 flex flex-col items-center justify-center relative">
           <h2 className="text-xs font-bold text-[var(--text-main)] uppercase tracking-widest absolute top-4 left-4">
             Asset Breakdown
@@ -523,7 +511,6 @@ export default function Portfolio() {
           </div>
         </div>
 
-        {/* Recent Executions with Millisecond Speed */}
         <div className="lg:col-span-2 terminal-card flex flex-col overflow-hidden">
           <div className="p-4 border-b border-[var(--border-subtle)] flex justify-between items-center bg-[var(--bg-root)]">
             <div className="flex items-center gap-2">
@@ -604,7 +591,6 @@ export default function Portfolio() {
         </div>
       </div>
 
-      {/* Positions: Long Holdings & Short Liabilities */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
         <div className="terminal-card overflow-hidden">
           <div className="p-4 border-b border-[var(--border-subtle)] bg-[var(--bg-root)]">

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "../config/firebase";
+import { API_URL } from "../config/api";
 import { useTheme } from "../hooks/useTheme";
 import { 
   TrendingUp, 
@@ -21,9 +20,12 @@ export default function TVLeaderboard() {
 
   const fetchLeaderboard = async () => {
     try {
-      const snap = await getDoc(doc(db, 'leaderboard', 'main'));
-      if (snap.exists()) {
-        setRankings(snap.data().rankings || []);
+      const res = await fetch(`${API_URL}/leaderboard`);
+      const json = await res.json();
+      
+      if (json.data) {
+        // Backend might return an array directly or an object containing rankings
+        setRankings(json.data.rankings || json.data || []);
       }
     } catch (error) {
       console.error("TV Leaderboard fetch error:", error);

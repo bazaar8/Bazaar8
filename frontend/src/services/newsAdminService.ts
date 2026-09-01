@@ -1,59 +1,41 @@
-import { collection, doc, setDoc } from "firebase/firestore";
 import { httpsCallable } from "../config/api";
-import { db } from "../config/firebase";
-import type { NewsEventAdmin } from "../types/news";
 
-export const importNewsEvents = async (events: Omit<NewsEventAdmin, "id" | "createdAt" | "status" | "startTime">[]) => {
-  const promises = events.map(async (event) => {
-    const eventRef = doc(collection(db, "newsEvents"));
-    const adminData: NewsEventAdmin = {
-      ...event,
-      id: eventRef.id,
-      status: 'draft',
-      startTime: 0,
-      createdAt: Date.now()
-    };
-    await setDoc(eventRef, adminData);
-  });
-  await Promise.all(promises);
+export const importNewsEvents = async (events: any[]) => {
+  const fn = httpsCallable("adminImportNews");
+  return await fn({ events });
 };
 
-export const createSingleNewsEvent = async (event: { headline: string; stockImpacts: Record<string, number>; durationMinutes: number }) => {
-  const createFn = httpsCallable('adminCreateSingleNews');
-  return await createFn(event);
+export const createSingleNewsEvent = async (data: any) => {
+  const fn = httpsCallable("adminCreateNewsEvent");
+  return await fn(data);
 };
 
-export const releaseEventNow = async (eventId: string, adminData: NewsEventAdmin, durationMinutes: number) => {
-  const releaseFn = httpsCallable('adminReleaseNews');
-  await releaseFn({ eventId, adminData, durationMinutes });
-};
-
-export const triggerNextNewsEvent = async () => {
-  const triggerFn = httpsCallable('adminTriggerNextNews');
-  return await triggerFn({});
-};
-
-export const triggerAllNewsEvents = async () => {
-  const triggerFn = httpsCallable('adminTriggerAllNews');
-  return await triggerFn({});
-};
-
-export const deleteSingleNewsEvent = async (eventId: string) => {
-  const deleteFn = httpsCallable('adminDeleteSingleNews');
-  await deleteFn({ eventId });
-};
-
-export const pauseEvent = async (eventId: string) => {
-  const pauseFn = httpsCallable('adminPauseNews');
-  await pauseFn({ eventId });
+export const releaseEventNow = async (eventId: string, event: any, durationMinutes: number) => {
+  const fn = httpsCallable("adminReleaseNewsEvent");
+  return await fn({ eventId, event, durationMinutes });
 };
 
 export const cancelEvent = async (eventId: string) => {
-  const cancelFn = httpsCallable('adminCancelNews');
-  await cancelFn({ eventId });
+  const fn = httpsCallable("adminCancelNewsEvent");
+  return await fn({ eventId });
 };
 
 export const deleteAllNewsEvents = async () => {
-  const deleteFn = httpsCallable('adminDeleteAllNews');
-  await deleteFn({});
+  const fn = httpsCallable("adminDeleteAllNews");
+  return await fn();
+};
+
+export const deleteSingleNewsEvent = async (eventId: string) => {
+  const fn = httpsCallable("adminDeleteSingleNews");
+  return await fn({ eventId });
+};
+
+export const triggerNextNewsEvent = async () => {
+  const fn = httpsCallable("adminTriggerNextNews");
+  return await fn();
+};
+
+export const triggerAllNewsEvents = async () => {
+  const fn = httpsCallable("adminTriggerAllNews");
+  return await fn();
 };

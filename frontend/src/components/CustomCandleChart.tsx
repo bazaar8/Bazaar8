@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ref, onValue, query, limitToLast } from "firebase/database";
-import { rtdb } from "../config/firebase";
+import { API_URL } from "../config/api";
 
 interface CustomCandleChartProps {
   ticker: string;
@@ -32,45 +31,77 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
   const lastMouseY = useRef(0);
 
   useEffect(() => {
-    const historyRef = query(ref(rtdb, `priceHistory/${ticker}`), limitToLast(1000));
-    const unsub = onValue(historyRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.val();
-        const rawTicks = Object.keys(data).map(ts => ({
-          ts: parseInt(ts, 10),
-          price: Number(data[ts])
-        })).sort((a, b) => a.ts - b.ts);
-
-        const bucketSize = 120000; 
-        const grouped = new Map<number, number[]>();
+    const fetchHistory = async () => {
+      try {
+        const token = localStorage.getItem("bazaar_jwt_token");
+        const res = await fetch(`${API_URL}/history/${ticker}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const json = await res.json();
         
-        rawTicks.forEach(tick => {
-          const bucket = Math.floor(tick.ts / bucketSize) * bucketSize;
-          if (!grouped.has(bucket)) grouped.set(bucket, []);
-          grouped.get(bucket)!.push(tick.price);
-        });
+        let rawTicks: {ts: number, price: number}[] = [];
+        
+        if (json.data) {
+          if (Array.isArray(json.data)) {
+            rawTicks = json.data.map((d: any) => ({
+              ts: parseInt(d.timestamp || d.ts, 10),
+              price: Number(d.price)
+            }));
+          } else {
+            rawTicks = Object.keys(json.data).map(ts => ({
+              ts: parseInt(ts, 10),
+              price: Number(json.data[ts])
+            }));
+          }
+        }
 
-        const processed: Candle[] = [];
-        Array.from(grouped.keys()).sort().forEach(bucketTs => {
-          const prices = grouped.get(bucketTs)!;
-          processed.push({
-            time: new Date(bucketTs).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-            open: prices[0],
-            high: Math.max(...prices),
-            low: Math.min(...prices),
-            close: prices[prices.length - 1]
+        if (rawTicks.length > 0) {
+          rawTicks.sort((a, b) => a.ts - b.ts);
+          const bucketSize = 120000; 
+          const grouped = new Map<number, number[]>();
+          
+          rawTicks.forEach(tick => {
+            const bucket = Math.floor(tick.ts / bucketSize) * bucketSize;
+            if (!grouped.has(bucket)) grouped.set(bucket, []);
+            grouped.get(bucket)!.push(tick.price);
           });
-        });
 
-        if (processed.length > 0) setCandles(processed);
-      } else {
+          const processed: Candle[] = [];
+          Array.from(grouped.keys()).sort().forEach(bucketTs => {
+            const prices = grouped.get(bucketTs)!;
+            processed.push({
+              time: new Date(bucketTs).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+              open: prices[0],
+              high: Math.max(...prices),
+              low: Math.min(...prices),
+              close: prices[prices.length - 1]
+            });
+          });
+
+          if (processed.length > 0) {
+             setCandles(processed);
+             return;
+          }
+        }
+
+        // Fallback if empty
+        setCandles([{
+          time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+          open: basePrice, high: basePrice, low: basePrice, close: basePrice
+        }]);
+      } catch (err) {
+        console.error("Failed to fetch history:", err);
         setCandles([{
           time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
           open: basePrice, high: basePrice, low: basePrice, close: basePrice
         }]);
       }
-    });
-    return () => unsub();
+    };
+
+    fetchHistory();
+    // Poll history every 60s as a fallback sync, currentPrice prop handles live updates
+    const interval = setInterval(fetchHistory, 60000);
+    return () => clearInterval(interval);
   }, [ticker, basePrice]);
 
   useEffect(() => {

@@ -4,10 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../hooks/useTheme';
 import { useLivePrices } from '../hooks/useLivePrices';
 import { LogOut, Bell, Sun, Moon, User, X, Newspaper, Menu, Volume2, VolumeX, CheckCheck, Trash2, TrendingUp, TrendingDown, Rocket, Sparkles } from 'lucide-react';
-import { collection, query, onSnapshot, doc } from 'firebase/firestore';
-import { getDatabase, ref as rtdbRef, onValue } from 'firebase/database';
-import { db } from '../config/firebase';
 import { useNotifications } from '../context/NotificationContext';
+import { socket } from '../config/socket';
 import logoUrl from '../assets/logo.png';
 
 export default function MainLayout() {
@@ -27,13 +25,11 @@ export default function MainLayout() {
     clearNotifications 
   } = useNotifications();
   
-  const [isFrozen, setIsFrozen] = useState(false);
   const [isAppReady, setIsAppReady] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAlertsOpen, setIsAlertsOpen] = useState(false);
   const [notificationFilter, setNotificationFilter] = useState<'all' | 'unread'>('all');
   const alertsRef = useRef<HTMLDivElement>(null);
-  const seenNewsRef = useRef<Set<string>>(new Set());
 
   // Close alerts dropdown on outside click
   useEffect(() => {
@@ -52,16 +48,6 @@ export default function MainLayout() {
   };
 
   useEffect(() => {
-    if (!user) return;
-    const unsubUser = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
-      if (docSnap.exists()) {
-        setIsFrozen(docSnap.data().isFrozen || false);
-      }
-    });
-    return () => unsubUser();
-  }, [user]);
-
-  useEffect(() => {
     const timer = setTimeout(() => setIsAppReady(true), 1000);
     return () => clearTimeout(timer);
   }, []);
@@ -75,62 +61,32 @@ export default function MainLayout() {
     }
   }, [marketStatus, profile, location.pathname, navigate, isAppReady]);
 
-  // Real-time news catalyst listener - triggers notification STRICTLY when news is fired
+  // Real-time news catalyst listener - triggers notification from Socket.io
   useEffect(() => {
     if (!user) return;
 
-    // 1. Listen to Realtime Database marketInfluence (instantaneous sub-10ms trigger when fired)
-    const rtdb = getDatabase();
-    const influenceRef = rtdbRef(rtdb, "marketInfluence");
-
-    const unsubRTDB = onValue(influenceRef, (snapshot) => {
-      const data = snapshot.val();
-      if (!data) return;
-
-      Object.entries(data).forEach(([eventId, item]: [string, any]) => {
-        if (item && item.status === 'active') {
-          const startTime = Number(item.startTime) || 0;
-          const timeSinceFired = Date.now() - startTime;
-
-          // Alert if fired within the last 2 minutes and not yet seen
-          if (timeSinceFired < 120000 && !seenNewsRef.current.has(eventId)) {
-            seenNewsRef.current.add(eventId);
-            notify({
-              type: "news",
-              title: item.headline || "Breaking Market News",
-              message: item.headline || "Breaking Market News",
-              link: "/news"
-            });
-          }
-        }
+    const handleNewsEvent = (data: any) => {
+      let title = "Breaking Market News";
+      if (data.headline) {
+        title = data.headline;
+      } else if (data.ipo) {
+        title = `IPO Update: ${data.ipo}`;
+      } else if (data.type === 'bulk_breaking') {
+        title = `${data.count} Breaking News Events Released!`;
+      }
+      
+      notify({
+        type: "news",
+        title: title,
+        message: title,
+        link: "/news"
       });
-    });
+    };
 
-    // 2. Firestore fallback listener for active news status changes
-    const q = query(collection(db, "newsEvents"));
-    const unsubFirestore = onSnapshot(q, (snap) => {
-      snap.docChanges().forEach((change) => {
-        const item = change.doc.data() as any;
-        if (item && item.status === 'active') {
-          const startTime = Number(item.startTime || item.firedAt) || 0;
-          const timeSinceFired = Date.now() - startTime;
-
-          if (startTime > 0 && timeSinceFired < 120000 && !seenNewsRef.current.has(change.doc.id)) {
-            seenNewsRef.current.add(change.doc.id);
-            notify({
-              type: "news",
-              title: item.headline,
-              message: item.headline,
-              link: "/news"
-            });
-          }
-        }
-      });
-    });
+    socket.on("newsUpdate", handleNewsEvent);
 
     return () => {
-      unsubRTDB();
-      unsubFirestore();
+      socket.off("newsUpdate", handleNewsEvent);
     };
   }, [user, notify]);
 
@@ -146,20 +102,18 @@ export default function MainLayout() {
     ? navLinks.filter(link => link.path === '/leaderboard')
     : navLinks;
 
-  const isBlocked = profile?.role !== 'admin' && (marketStatus === 'PAUSED' || isFrozen);
+  const isBlocked = profile?.role !== 'admin' && (marketStatus === 'PAUSED' || profile?.isFrozen);
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--bg-root)] transition-colors duration-200">
       <header className="bg-[var(--bg-card)] border-b border-[var(--border-subtle)] sticky top-0 z-50 transition-colors duration-200">
         <div className="max-w-[1600px] mx-auto px-2 sm:px-4 h-16 flex items-center justify-between">
           
-          {/* Left Brand */}
           <div className="flex items-center gap-2 sm:gap-3 py-2 flex-shrink-0 min-w-[160px]">
             <img src={logoUrl} alt="Bazaar 8.0 Logo" className="w-8 h-8 sm:w-9 sm:h-9 object-contain" />
             <span className="font-black text-base sm:text-lg tracking-tight text-[var(--text-main)]">Bazaar 8.0</span>
           </div>
 
-          {/* Center-Aligned Navigation Links (Smaller, Refined Typography) */}
           <nav className="hidden lg:flex items-center justify-center gap-7 h-full flex-1">
             {visibleNavLinks.map(link => {
               const isActive = location.pathname === link.path || (link.path !== '/' && location.pathname.startsWith(link.path));
@@ -182,7 +136,6 @@ export default function MainLayout() {
             })}
           </nav>
 
-          {/* Right Tools & Profile */}
           <div className="flex items-center justify-end gap-3 sm:gap-4 flex-shrink-0 min-w-[160px]">
             <div className="flex items-center gap-2 sm:gap-3">
               <button 
@@ -207,11 +160,8 @@ export default function MainLayout() {
                   )}
                 </button>
 
-                {/* Alerts Dropdown Popover */}
                 {isAlertsOpen && (
                   <div className="absolute right-0 top-12 w-80 sm:w-96 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 font-mono">
-                    
-                    {/* Header */}
                     <div className="p-3.5 border-b border-[var(--border-subtle)] flex items-center justify-between bg-[var(--bg-root)]">
                       <div className="flex items-center gap-2">
                         <div className="w-6 h-6 rounded-lg bg-[var(--up-color)]/10 text-[var(--up-color)] flex items-center justify-center">
@@ -228,7 +178,6 @@ export default function MainLayout() {
                       </div>
 
                       <div className="flex items-center gap-1 text-[var(--text-muted)]">
-                        {/* Sound Toggle */}
                         <button
                           onClick={() => setSoundEnabled(!soundEnabled)}
                           className={`p-1.5 rounded-lg hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] transition-colors ${
@@ -239,7 +188,6 @@ export default function MainLayout() {
                           {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                         </button>
 
-                        {/* Mark All Read */}
                         {unreadCount > 0 && (
                           <button
                             onClick={markAllAsRead}
@@ -250,7 +198,6 @@ export default function MainLayout() {
                           </button>
                         )}
 
-                        {/* Clear All */}
                         {notifications.length > 0 && (
                           <button
                             onClick={clearNotifications}
@@ -270,7 +217,6 @@ export default function MainLayout() {
                       </div>
                     </div>
 
-                    {/* Filter Tabs */}
                     <div className="px-3 py-1.5 border-b border-[var(--border-subtle)] bg-[var(--bg-card)] flex items-center justify-between text-[10px]">
                       <div className="flex items-center gap-1">
                         <button
@@ -287,7 +233,6 @@ export default function MainLayout() {
                         </button>
                       </div>
 
-                      {/* Live Market State Pill */}
                       <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase flex items-center gap-1 ${
                         marketStatus === 'OPEN' ? 'bg-[var(--up-color)]/15 text-[var(--up-color)]' : 'bg-[var(--down-color)]/15 text-[var(--down-color)]'
                       }`}>
@@ -296,7 +241,6 @@ export default function MainLayout() {
                       </span>
                     </div>
 
-                    {/* Notification List */}
                     <div className="max-h-80 overflow-y-auto divide-y divide-[var(--border-subtle)]">
                       {(notificationFilter === 'unread' ? notifications.filter(n => !n.read) : notifications).length === 0 ? (
                         <div className="py-10 px-4 text-center">
@@ -321,7 +265,6 @@ export default function MainLayout() {
                                 !item.read ? "bg-amber-400/5" : ""
                               }`}
                             >
-                              {/* Icon Badge */}
                               <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${
                                 item.type === "ipo" ? "bg-amber-400/15 text-amber-400" :
                                 isBull ? "bg-[var(--up-color)]/15 text-[var(--up-color)]" :
@@ -463,7 +406,6 @@ export default function MainLayout() {
         <Outlet />
       </main>
 
-
       {isBlocked && (
         <div className="fixed inset-0 z-[9999] bg-[var(--bg-root)] flex flex-col items-center justify-center p-6 text-center">
           <div className="flex flex-col items-center gap-5 max-w-lg">
@@ -480,11 +422,11 @@ export default function MainLayout() {
                 Bazaar 8.0 • Institutional Terminal
               </div>
               <h1 className="text-2xl sm:text-3xl font-black text-[var(--text-main)] tracking-wider uppercase">
-                {isFrozen ? "Account Suspended" : "Market Paused"}
+                {profile?.isFrozen ? "Account Suspended" : "Market Paused"}
               </h1>
             </div>
             <p className="text-[var(--text-muted)] font-mono text-xs sm:text-sm leading-relaxed border-t border-[var(--border-subtle)] pt-4">
-              {isFrozen 
+              {profile?.isFrozen 
                 ? "Your terminal trading privileges have been temporarily frozen by administrators. Please contact the market operations desk." 
                 : "Trading sessions are paused by exchange controllers. Order queues and live execution are temporarily held. Please stand by."}
             </p>

@@ -1,9 +1,6 @@
 import { useState, useEffect } from "react";
-import { httpsCallable } from "../config/api";
-import { getDatabase, ref, onValue } from "firebase/database";
-import { getFirestore, collection, onSnapshot, query, orderBy, limit, addDoc, doc, updateDoc} from "firebase/firestore";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { app, auth } from "../config/firebase";
+import { httpsCallable, API_URL } from "../config/api";
+import { socket } from "../config/socket";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme"; 
 import { 
@@ -66,63 +63,60 @@ export default function AdminDashboard() {
   
   const [adminLogs, setAdminLogs] = useState<any[]>([]);
   const [taxTreasury, setTaxTreasury] = useState<{ totalTaxCollected?: number; lastTradeTax?: number }>({ totalTaxCollected: 0 });
-  
-  const rtdb = getDatabase(app);
-  const db = getFirestore(app);
 
+  // Fetch Dashboard Data via REST Polling & Sockets
   useEffect(() => {
     if (profile?.role !== "admin") return;
 
-    const mktRef = ref(rtdb, "marketStatus/state");
-    const unsubMkt = onValue(mktRef, (snap) => setMarketState(snap.val() || "CLOSED"));
+    const fetchAdminData = async () => {
+      const token = localStorage.getItem("bazaar_jwt_token");
+      const headers = { Authorization: `Bearer ${token}` };
 
-    const pricesRef = ref(rtdb, "livePrices");
-    const unsubPrices = onValue(pricesRef, (snap) => setPrices(snap.val() || {}));
+      try {
+        const [usersRes, ordersRes, iposRes, newsRes, logsRes, stateRes] = await Promise.all([
+          fetch(`${API_URL}/admin/users`, { headers }),
+          fetch(`${API_URL}/admin/orders`, { headers }),
+          fetch(`${API_URL}/ipos`, { headers }),
+          fetch(`${API_URL}/news`, { headers }),
+          fetch(`${API_URL}/adminLogs`, { headers }),
+          fetch(`${API_URL}/state`, { headers })
+        ]);
 
-    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
-      setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() })));
-    });
+        if (usersRes.ok) setUsers((await usersRes.json()).data || []);
+        if (ordersRes.ok) setOrders((await ordersRes.json()).data || []);
+        if (iposRes.ok) setIpos((await iposRes.json()).data || []);
+        if (newsRes.ok) setAdminEvents((await newsRes.json()).data || []);
+        if (logsRes.ok) setAdminLogs((await logsRes.json()).data || []);
+        if (stateRes.ok) {
+          const stateData = await stateRes.json();
+          if (stateData.data) {
+            setTaxTreasury({ totalTaxCollected: stateData.data.totalTaxCollected });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch admin data", err);
+      }
+    };
 
-    const unsubOrders = onSnapshot(query(collection(db, "orders"), orderBy("timestamp", "desc"), limit(50)), (snap) => {
-      setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    fetchAdminData();
+    const interval = setInterval(fetchAdminData, 5000); // Refresh data every 5s
 
-    const unsubIpos = onSnapshot(collection(db, "ipos"), (snap) => {
-      setIpos(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    const handleLivePrices = (data: any) => {
+      if (data.prices) setPrices(data.prices);
+      if (data.marketStatus) setMarketState(data.marketStatus);
+    };
 
-    const unsubNews = onSnapshot(query(collection(db, "newsEvents"), orderBy("createdAt", "desc")), (snap) => {
-      setAdminEvents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    const unsubAdminLogs = onSnapshot(query(collection(db, "adminLogs"), orderBy("timestamp", "desc"), limit(100)), (snap) => {
-      setAdminLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    const unsubTreasury = onSnapshot(doc(db, "system", "treasury"), (snap) => {
-      if (snap.exists()) setTaxTreasury(snap.data() as any);
-    });
+    socket.on("livePrices", handleLivePrices);
 
     return () => {
-      unsubMkt();
-      unsubPrices();
-      unsubUsers();
-      unsubOrders();
-      unsubIpos();
-      unsubNews();
-      unsubAdminLogs();
-      unsubTreasury();
+      clearInterval(interval);
+      socket.off("livePrices", handleLivePrices);
     };
   }, [profile]);
 
   const logAdminAction = async (action: string, details: any) => {
     try {
-      await addDoc(collection(db, "adminLogs"), {
-        timestamp: Date.now(),
-        adminEmail: profile?.name || 'admin',
-        action,
-        details
-      });
+      await httpsCallable('logAdminAction')({ action, details });
     } catch (e) { console.error("Failed to write admin log", e); }
   };
 
@@ -130,8 +124,7 @@ export default function AdminDashboard() {
     setProcessingAction(`market-${status}`);
     logAdminAction("SET_MARKET_STATE", { state: status });
     try {
-      const fn = httpsCallable('adminSetMarketStatus');
-      await fn({ status });
+      await httpsCallable('adminSetMarketStatus')({ status });
     } catch (err: any) { alert("Error: " + err.message); } 
     finally { setProcessingAction(null); }
   };
@@ -141,8 +134,7 @@ export default function AdminDashboard() {
       setProcessingAction('force-price');
       logAdminAction("FORCE_PRICE", { ticker: forceTicker, newPrice: forcePrice });
       try {
-        const fn = httpsCallable('adminForceStockPrice');
-        await fn({ ticker: forceTicker.toUpperCase(), price: parseFloat(forcePrice) });
+        await httpsCallable('adminForceStockPrice')({ ticker: forceTicker.toUpperCase(), price: parseFloat(forcePrice) });
         setForceTicker(""); setForcePrice("");
       } catch (err: any) { alert("Error: " + err.message); } 
       finally { setProcessingAction(null); }
@@ -153,8 +145,7 @@ export default function AdminDashboard() {
     setProcessingAction(`freeze-${uid}`);
     logAdminAction("TOGGLE_FREEZE", { targetUserId: uid, isFrozen });
     try {
-      const fn = httpsCallable('adminToggleUserFreeze');
-      await fn({ uid, isFrozen });
+      await httpsCallable('adminToggleUserFreeze')({ uid, isFrozen });
     } catch (err: any) { alert("Error: " + err.message); } 
     finally { setProcessingAction(null); }
   };
@@ -173,7 +164,7 @@ export default function AdminDashboard() {
       setProcessingAction(`cash-${uid}`);
       logAdminAction("ADJUST_USER_BALANCE", { targetUserId: uid, newBalance: amount, reason: "Admin manual reset" });
       try {
-        await updateDoc(doc(db, "users", uid), { cashBalance: amount });
+        await httpsCallable('adminAdjustCash')({ uid, amount });
       } catch (err: any) { alert("Error adjusting cash: " + err.message); } 
       finally { setProcessingAction(null); }
     }
@@ -186,8 +177,7 @@ export default function AdminDashboard() {
     setProcessingAction("reset");
     logAdminAction("FACTORY_RESET", { target: "ENTIRE_SYSTEM" });
     try {
-      const fn = httpsCallable('adminResetSystem');
-      await fn();
+      await httpsCallable('adminResetSystem')();
       alert("System has been completely reset.");
     } catch (err: any) { alert("Error resetting system: " + err.message); } 
     finally { setProcessingAction(null); }
@@ -224,14 +214,13 @@ export default function AdminDashboard() {
     if (!window.confirm(`Send password reset emails to all students?`)) return;
     setProcessingAction("emails");
     logAdminAction("BULK_PASSWORD_RESET", { target: "ALL_STUDENTS" });
-    let count = 0;
-    for (const u of users) {
-      if (u.role !== 'admin') {
-        try { await sendPasswordResetEmail(auth, u.email); count++; } catch(e) {}
-      }
+    try {
+      await httpsCallable('adminSendPasswordResets')({});
+      alert(`Password reset requests dispatched to backend!`);
+    } catch(e: any) {
+      alert("Error: " + e.message);
     }
     setProcessingAction(null);
-    alert(`Sent ${count} password reset emails successfully!`);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -427,10 +416,10 @@ export default function AdminDashboard() {
 
   const handleFireNews = async (event: any) => {
     if (!window.confirm(`Trigger event: "${event.headline}" over ${event.durationMinutes || eventDuration} minutes?`)) return;
-    setProcessingAction(`fire-${event.id}`);
-    logAdminAction("FIRE_NEWS", { eventId: event.id, headline: event.headline });
+    setProcessingAction(`fire-${event.eventId || event.id}`);
+    logAdminAction("FIRE_NEWS", { eventId: event.eventId || event.id, headline: event.headline });
     try { 
-      await releaseEventNow(event.id, event, event.durationMinutes || eventDuration); 
+      await releaseEventNow(event.eventId || event.id, event, event.durationMinutes || eventDuration); 
     } catch (err: any) { 
       alert("Error triggering news: " + err.message); 
     } finally { 
@@ -504,35 +493,17 @@ export default function AdminDashboard() {
     logAdminAction("CREATE_IPO", { symbol: ipoTicker.toUpperCase(), companyName: ipoName, totalLots: ipoTotalLots });
     try {
       const startOpen = ipoOpenTime ? new Date(ipoOpenTime).getTime() : Date.now();
-      const currentStatus = startOpen > Date.now() ? "upcoming" : "open";
-      await addDoc(collection(db, "ipos"), {
+      await httpsCallable('adminCreateIPO')({
         name: ipoName, 
         ticker: ipoTicker.toUpperCase(), 
         price: parseFloat(ipoPrice) || 0, 
         lotSize: parseInt(ipoLotSize, 10) || 1,           
         totalLots: parseInt(ipoTotalLots, 10) || 1,       
         listingPremiumPct: parseFloat(ipoPremium) || 0, 
-        sector: "Upcoming", 
-        allotmentType: "lottery",                
-        status: currentStatus,
-        totalSubscribedLots: 0,
-        totalSubscribedShares: 0,
-        subscriptionCount: 0,
-        subscriptionRate: 0,
         openTime: startOpen, 
         closeTime: ipoCloseTime ? new Date(ipoCloseTime).getTime() : Date.now() + 3600000,
         listTime: ipoListTime ? new Date(ipoListTime).getTime() : Date.now() + 7200000
       });
-      await addDoc(collection(db, "newsEvents"), {
-        headline: `🔔 New IPO Announced: ${ipoTicker.toUpperCase()} (${ipoName}) - Bidding open at ₹${ipoPrice}!`,
-        status: "active",
-        startTime: Date.now(),
-        createdAt: Date.now(),
-        durationMinutes: 60,
-        targetTickers: [ipoTicker.toUpperCase()],
-        impactDirection: "positive"
-      });
-
       setIpoName(""); setIpoTicker(""); setIpoPrice(""); setIpoLotSize(""); setIpoTotalLots(""); setIpoPremium(""); setIpoOpenTime(""); setIpoCloseTime(""); setIpoListTime("");
       alert("IPO Scheduled & Initialized!");
     } catch (err: any) { alert("Error creating IPO: " + err.message); } finally { setProcessingAction(null); }
@@ -543,38 +514,11 @@ export default function AdminDashboard() {
     logAdminAction(action === 'allot' ? "RUN_IPO_ALLOTMENT" : action === 'list' ? "LIST_IPO" : "CLOSE_IPO", { ipoSymbol: ipoId });
     try {
       if (action === 'close') {
-        await updateDoc(doc(db, "ipos", ipoId), { status: "closed" });
-        await addDoc(collection(db, "newsEvents"), {
-          headline: `⏳ IPO Bidding Closed: Applications for ${ipoId} are now closed. Allotment in progress!`,
-          status: "active",
-          startTime: Date.now(),
-          createdAt: Date.now(),
-          durationMinutes: 60,
-          targetTickers: [ipoId],
-          impactDirection: "neutral"
-        });
+        await httpsCallable('adminCloseIPO')({ ipoId });
       } else if (action === 'allot') {
-        await updateDoc(doc(db, "ipos", ipoId), { triggerAllotment: true });
-        await addDoc(collection(db, "newsEvents"), {
-          headline: `🎉 IPO Allotment Out: Allotment for ${ipoId} is finalized! Successful bids credited to portfolios.`,
-          status: "active",
-          startTime: Date.now(),
-          createdAt: Date.now(),
-          durationMinutes: 60,
-          targetTickers: [ipoId],
-          impactDirection: "positive"
-        });
+        await httpsCallable('processAllotment')({ ipoId });
       } else {
-        await updateDoc(doc(db, "ipos", ipoId), { triggerListing: true });
-        await addDoc(collection(db, "newsEvents"), {
-          headline: `🚀 IPO Listed: ${ipoId} is now officially LISTED and live for trading on the exchange!`,
-          status: "active",
-          startTime: Date.now(),
-          createdAt: Date.now(),
-          durationMinutes: 60,
-          targetTickers: [ipoId],
-          impactDirection: "positive"
-        });
+        await httpsCallable('listIPO')({ ipoId });
       }
     } catch (err: any) { alert(`Error during ${action}: ` + err.message); } finally { setProcessingAction(null); }
   };
@@ -588,7 +532,7 @@ export default function AdminDashboard() {
     setProcessingAction(`${ipoId}-gmp`);
     logAdminAction("UPDATE_IPO_GMP", { ipoSymbol: ticker, newGMP: newGmp });
     try {
-      await updateDoc(doc(db, "ipos", ipoId), { listingPremiumPct: newGmp });
+      await httpsCallable('adminUpdateIPOGMP')({ ipoId, listingPremiumPct: newGmp });
       setEditingGmpId(null);
       setGmpValue("");
     } catch (err: any) {
@@ -1037,7 +981,7 @@ export default function AdminDashboard() {
                         </tr>
                       ) : (
                         adminLogs.map(log => (
-                          <tr key={log.id} className="hover:bg-[var(--bg-root)] transition-colors">
+                          <tr key={log.id || log.timestamp} className="hover:bg-[var(--bg-root)] transition-colors">
                             <td className="p-4 text-[var(--text-muted)]">
                               {new Date(log.timestamp).toLocaleString()}
                             </td>
@@ -1436,7 +1380,7 @@ export default function AdminDashboard() {
 
                         return (
                           <div
-                            key={evt.id}
+                            key={evt.id || evt.eventId}
                             className={`p-4 rounded-xl border transition-all ${
                               isActive
                                 ? "bg-[#3b82f608] border-[#3b82f650] shadow-sm"
@@ -1510,11 +1454,11 @@ export default function AdminDashboard() {
                                     <button
                                       type="button"
                                       onClick={() => handleFireNews(evt)}
-                                      disabled={processingAction === `fire-${evt.id}`}
+                                      disabled={processingAction === `fire-${evt.eventId || evt.id}`}
                                       className="px-3 py-1 bg-amber-400 hover:bg-amber-300 text-black font-bold uppercase rounded flex items-center gap-1 transition-all shadow-sm"
                                       title="Trigger this event now"
                                     >
-                                      {processingAction === `fire-${evt.id}` ? (
+                                      {processingAction === `fire-${evt.eventId || evt.id}` ? (
                                         <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />
                                       ) : (
                                         <Zap className="w-3 h-3 fill-black" />
@@ -1524,8 +1468,8 @@ export default function AdminDashboard() {
 
                                     <button
                                       type="button"
-                                      onClick={() => handleDeleteSingleNews(evt.id, evt.headline)}
-                                      disabled={processingAction === `delete-${evt.id}`}
+                                      onClick={() => handleDeleteSingleNews(evt.eventId || evt.id, evt.headline)}
+                                      disabled={processingAction === `delete-${evt.eventId || evt.id}`}
                                       className="p-1 text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
                                       title="Delete draft from queue"
                                     >
@@ -1537,11 +1481,11 @@ export default function AdminDashboard() {
                                 {isActive && (
                                   <button
                                     type="button"
-                                    onClick={() => handleCancelNews(evt.id)}
-                                    disabled={processingAction === `cancel-${evt.id}`}
+                                    onClick={() => handleCancelNews(evt.eventId || evt.id)}
+                                    disabled={processingAction === `cancel-${evt.eventId || evt.id}`}
                                     className="px-2.5 py-1 bg-[var(--bg-card)] hover:bg-[var(--bg-root)] text-[var(--text-muted)] hover:text-white border border-[var(--border-subtle)] text-[9px] font-bold uppercase rounded flex items-center gap-1 transition-colors"
                                   >
-                                    {processingAction === `cancel-${evt.id}` ? (
+                                    {processingAction === `cancel-${evt.eventId || evt.id}` ? (
                                       <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
                                     ) : (
                                       "Halt / Cancel"
@@ -1647,13 +1591,13 @@ export default function AdminDashboard() {
                         const costPerLot = (Number(ipo.price) || 0) * (Number(ipo.lotSize) || 1);
                         const subRate = ipo.subscriptionRate !== undefined ? Number(ipo.subscriptionRate) : Number(((Number(ipo.totalSubscribedLots) || 0) / (Number(ipo.totalLots) || 1)).toFixed(2));
                         return (
-                          <tr key={ipo.id} className="hover:bg-[var(--bg-root)] transition-colors">
+                          <tr key={ipo.id || ipo.ipoId} className="hover:bg-[var(--bg-root)] transition-colors">
                             <td className="p-3 text-[var(--text-main)] font-bold">
                               {ipo.ticker} <span className="block text-[9px] font-normal text-[var(--text-muted)]">{ipo.lotSize} shares/lot</span>
                             </td>
                             <td className="p-3 text-right text-[var(--text-main)]">₹{costPerLot.toFixed(2)}</td>
                             <td className="p-3 text-right">
-                              {editingGmpId === ipo.id ? (
+                              {editingGmpId === (ipo.id || ipo.ipoId) ? (
                                 <div className="flex items-center justify-end gap-1 font-mono">
                                   <input 
                                     type="number"
@@ -1665,8 +1609,8 @@ export default function AdminDashboard() {
                                   />
                                   <span className="text-[10px] text-[var(--text-muted)]">%</span>
                                   <button
-                                    onClick={() => handleUpdateIPOGMP(ipo.id, ipo.ticker)}
-                                    disabled={processingAction === `${ipo.id}-gmp`}
+                                    onClick={() => handleUpdateIPOGMP((ipo.id || ipo.ipoId), ipo.ticker)}
+                                    disabled={processingAction === `${ipo.id || ipo.ipoId}-gmp`}
                                     className="px-1.5 py-0.5 bg-[var(--up-color)] text-white text-[10px] rounded font-bold hover:opacity-90"
                                   >
                                     Save
@@ -1684,7 +1628,7 @@ export default function AdminDashboard() {
                                     {Number(ipo.listingPremiumPct || 0) >= 0 ? '+' : ''}{ipo.listingPremiumPct || 0}%
                                   </span>
                                   <button
-                                    onClick={() => { setEditingGmpId(ipo.id); setGmpValue(String(ipo.listingPremiumPct || 0)); }}
+                                    onClick={() => { setEditingGmpId(ipo.id || ipo.ipoId); setGmpValue(String(ipo.listingPremiumPct || 0)); }}
                                     className="opacity-40 group-hover:opacity-100 p-1 text-[var(--text-muted)] hover:text-amber-400 text-[10px] rounded transition-opacity"
                                     title="Edit GMP"
                                   >
@@ -1711,25 +1655,25 @@ export default function AdminDashboard() {
                             </td>
                             <td className="p-3 flex justify-end gap-2">
                               <button 
-                                onClick={() => handleIPOAction(ipo.id, 'close')}
-                                disabled={ipo.status !== 'open' || processingAction === `${ipo.id}-close`}
+                                onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'close')}
+                                disabled={ipo.status !== 'open' || processingAction === `${ipo.id || ipo.ipoId}-close`}
                                 className="px-2 py-1 flex items-center gap-1 bg-[#f59e0b15] hover:opacity-80 border border-[#f59e0b50] disabled:opacity-50 text-[#f59e0b] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
                               >
-                                {processingAction === `${ipo.id}-close` ? <div className="w-3 h-3 border-2 border-[#f59e0b] border-t-transparent rounded-full animate-spin" /> : <><Pause className="w-3 h-3" /> Close</>}
+                                {processingAction === `${ipo.id || ipo.ipoId}-close` ? <div className="w-3 h-3 border-2 border-[#f59e0b] border-t-transparent rounded-full animate-spin" /> : <><Pause className="w-3 h-3" /> Close</>}
                               </button>
                               <button 
-                                onClick={() => handleIPOAction(ipo.id, 'allot')}
-                                disabled={ipo.status !== 'closed' || processingAction === `${ipo.id}-allot`}
+                                onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'allot')}
+                                disabled={ipo.status !== 'closed' || processingAction === `${ipo.id || ipo.ipoId}-allot`}
                                 className="px-2 py-1 flex items-center gap-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-colors"
                               >
-                                {processingAction === `${ipo.id}-allot` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Allot</>}
+                                {processingAction === `${ipo.id || ipo.ipoId}-allot` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Allot</>}
                               </button>
                               <button 
-                                onClick={() => handleIPOAction(ipo.id, 'list')}
-                                disabled={ipo.status !== 'allotted' || processingAction === `${ipo.id}-list`}
+                                onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'list')}
+                                disabled={ipo.status !== 'allotted' || processingAction === `${ipo.id || ipo.ipoId}-list`}
                                 className="px-2 py-1 flex items-center gap-1 bg-[#08998115] hover:opacity-80 border border-[#08998150] disabled:opacity-50 text-[var(--up-color)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
                               >
-                                 {processingAction === `${ipo.id}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Sparkles className="w-3 h-3" /> List</>}
+                                 {processingAction === `${ipo.id || ipo.ipoId}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Sparkles className="w-3 h-3" /> List</>}
                               </button>
                             </td>
                           </tr>

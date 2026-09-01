@@ -1,7 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, onSnapshot, doc } from "firebase/firestore";
-import { httpsCallable } from "../config/api";
-import { db } from "../config/firebase";
+import { httpsCallable, API_URL } from "../config/api";
 import { useAuth } from "../context/AuthContext";
 import { CheckCircle, TrendingUp, Clock, X } from "lucide-react";
 import { useNotifications } from "../context/NotificationContext";
@@ -10,45 +8,49 @@ export default function IPO() {
   const { user } = useAuth();
   const { notify } = useNotifications();
   const [ipos, setIpos] = useState<any[]>([]);
-  const [subscriptions, setSubscriptions] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [processingIpoId, setProcessingIpoId] = useState<string | null>(null);
 
   const [selectedIpo, setSelectedIpo] = useState<any | null>(null);
   const [lotsToApply, setLotsToApply] = useState(1);
 
-  useEffect(() => {
-    const unsubIpos = onSnapshot(collection(db, "ipos"), (snap) => {
-      setIpos(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
-    return () => unsubIpos();
-  }, []);
-
-  useEffect(() => {
-    if (!user || ipos.length === 0) return;
-
-    const unsubs = ipos.map(ipo => {
-      return onSnapshot(doc(db, "ipos", ipo.id, "subscriptions", user.uid), (docSnap) => {
-        if (docSnap.exists()) {
-          setSubscriptions(prev => ({ ...prev, [ipo.id]: docSnap.data() }));
-        }
+  const fetchIpos = async () => {
+    if (!user) return;
+    try {
+      const token = localStorage.getItem("bazaar_jwt_token");
+      const res = await fetch(`${API_URL}/ipos`, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-    });
+      const json = await res.json();
+      if (json.data) {
+        setIpos(json.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch IPOs", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return () => unsubs.forEach(u => u());
-  }, [user, ipos]);
+  useEffect(() => {
+    fetchIpos();
+    // Poll for live IPO subscription updates every 5 seconds
+    const interval = setInterval(fetchIpos, 5000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   const handleApply = async () => {
     if (!selectedIpo || !user || lotsToApply < 1) return;
     
-    setProcessingIpoId(selectedIpo.id);
+    const ipoId = selectedIpo.ipoId || selectedIpo._id;
+    setProcessingIpoId(ipoId);
+    
     try {
       const fn = httpsCallable('subscribeIPO');
       const totalShares = lotsToApply * (Number(selectedIpo.lotSize) || 1);
       
       await fn({ 
-        ipoId: selectedIpo.id, 
+        ipoId: ipoId, 
         requestedShares: totalShares,
         requestedLots: lotsToApply
       });
@@ -62,6 +64,7 @@ export default function IPO() {
       });
       setSelectedIpo(null);
       setLotsToApply(1);
+      fetchIpos(); // Instantly refresh status
     } catch (err: any) {
       notify({
         type: "alert",
@@ -109,17 +112,18 @@ export default function IPO() {
           </div>
         ) : (
           ipos.map((ipo) => {
+            const ipoId = ipo.ipoId || ipo._id;
             const price = Number(ipo.price) || 0;
             const lotSize = Number(ipo.lotSize) || 1;
             const minInvestment = price * lotSize;
             const gmp = Number(ipo.listingPremiumPct) || 0;
             const subscriptionRate = ipo.subscriptionRate !== undefined ? Number(ipo.subscriptionRate) : Number(((Number(ipo.totalSubscribedLots) || 0) / (Number(ipo.totalLots) || 1)).toFixed(2));
             
-            const mySub = subscriptions[ipo.id];
+            const mySub = ipo.subscriptions?.find((s: any) => s.uid === user?.uid);
             const hasApplied = !!mySub;
 
             return (
-              <div key={ipo.id} className="terminal-card flex flex-col justify-between p-5 space-y-4">
+              <div key={ipoId} className="terminal-card flex flex-col justify-between p-5 space-y-4">
                 <div className="space-y-3">
                   <div className="flex items-start justify-between">
                     <div>
@@ -136,7 +140,6 @@ export default function IPO() {
                     </span>
                   </div>
 
-                  {/* Live Subscription Status & Progress Bar */}
                   <div className="p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded space-y-2 font-mono">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
@@ -160,7 +163,6 @@ export default function IPO() {
                       </span>
                     </div>
 
-                    {/* Progress Bar */}
                     <div className="w-full bg-[var(--border-subtle)] h-2 rounded-full overflow-hidden">
                       <div 
                         className={`h-full transition-all duration-500 rounded-full ${
@@ -317,10 +319,10 @@ export default function IPO() {
 
             <button
               onClick={handleApply}
-              disabled={processingIpoId === selectedIpo.id}
+              disabled={processingIpoId === (selectedIpo.ipoId || selectedIpo._id)}
               className="w-full py-2 bg-[var(--up-color)] hover:opacity-90 disabled:opacity-50 text-white text-xs font-bold uppercase rounded transition-opacity"
             >
-              {processingIpoId === selectedIpo.id ? "Processing..." : "Submit Application"}
+              {processingIpoId === (selectedIpo.ipoId || selectedIpo._id) ? "Processing..." : "Submit Application"}
             </button>
           </div>
         </div>

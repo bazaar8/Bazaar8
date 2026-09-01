@@ -1,23 +1,19 @@
-import { 
-  signInWithEmailAndPassword, 
-  signOut, 
-  onAuthStateChanged
-} from "firebase/auth";
-import type { User } from "firebase/auth";
-import { auth } from "../config/firebase";
+import { httpsCallable } from "../config/api";
 
-export const login = (email: string, password: string) => {
-  return signInWithEmailAndPassword(auth, email, password);
+// Note: Standard login/logout state is already handled by AuthContext.tsx.
+// Use this service for user registration and password recovery.
+
+export const registerUser = async (email: string, password: string, name: string) => {
+  const fn = httpsCallable("register");
+  return await fn({ email, password, name });
 };
 
-export const logout = () => {
-  return signOut(auth);
+export const resetPassword = async (email: string) => {
+  const fn = httpsCallable("resetPassword");
+  return await fn({ email });
 };
 
-export const subscribeToAuthChanges = (callback: (user: User | null) => void) => {
-  return onAuthStateChanged(auth, callback);
-};
-
-export const getCurrentUser = (): User | null => {
-  return auth.currentUser;
+export const updatePassword = async (newPassword: string) => {
+  const fn = httpsCallable("updatePassword");
+  return await fn({ newPassword });
 };

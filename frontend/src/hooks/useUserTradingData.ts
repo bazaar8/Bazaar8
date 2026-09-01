@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { collection, doc, onSnapshot, query, where, limit } from "firebase/firestore";
-import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
+import { API_URL } from "../config/api";
+import { socket } from "../config/socket";
 import type { Holding, Order } from "../types/database";
 
 export function useUserTradingData() {
@@ -13,73 +13,57 @@ export function useUserTradingData() {
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
+  const refreshUserData = async () => {
+    const token = localStorage.getItem("bazaar_jwt_token");
+    if (!token) return;
+    try {
+      const [userRes, ordersRes] = await Promise.all([
+        fetch(`${API_URL}/me`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/orders`, { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      const userData = await userRes.json();
+      const ordersData = await ordersRes.json();
+
+      if (userData.data) {
+        setCashBalance(userData.data.cashBalance || 0);
+        setStartingBalance(userData.data.startingBalance || 1000000);
+        const holdings: Holding[] = userData.data.holdings || [];
+        setLongHoldings(holdings.filter(h => h.positionType === "long" && h.quantity > 0));
+        setShortHoldings(holdings.filter(h => h.positionType === "short" && h.quantity > 0));
+      }
+
+      if (ordersData.data) {
+        setRecentOrders(ordersData.data);
+      }
+    } catch (e) {
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    if (!user) {
+    if (!user?.uid) {
       setLoading(false);
       return;
     }
+    refreshUserData();
 
-    const userDocRef = doc(db, "users", user.uid);
-    const unsubUser = onSnapshot(userDocRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setCashBalance(data.cashBalance ?? data.cash ?? 0);
-        setStartingBalance(data.startingBalance ?? data.startingCapital ?? 1000000);
-      }
-    }, (err) => { 
-      console.warn("User Data Error:", err); 
-      setLoading(false); 
-    });
+    const channel = `userUpdate:${user.uid}`;
+    const handleUpdate = () => refreshUserData();
+    socket.on(channel, handleUpdate);
 
-    const holdingsColRef = collection(db, "users", user.uid, "holdings");
-    const unsubHoldings = onSnapshot(holdingsColRef, (snap) => {
-      const longs: Holding[] = [];
-      const shorts: Holding[] = [];
-      snap.forEach((d) => {
-        const h = d.data() as Holding;
-        if (h.positionType === "long" && h.quantity > 0) longs.push(h);
-        if (h.positionType === "short" && h.quantity > 0) shorts.push(h);
-      });
-      setLongHoldings(longs);
-      setShortHoldings(shorts);
-    }, (err) => console.warn("Holdings Error:", err));
-
-    const ordersColRef = collection(db, "orders");
-    const ordersQ = query(ordersColRef, where("uid", "==", user.uid), limit(200));
-    
-    const unsubOrders = onSnapshot(ordersQ, (snap) => {
-
-      const ords = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any)
-      })) as Order[];
-      
-      ords.sort((a, b) => {
-        const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp || 0);
-        const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp || 0);
-        return timeB - timeA;
-      });
-
-      setRecentOrders(ords);
-    }, (err) => {
-      console.warn("Orders Error:", err);
-      setRecentOrders([]);
-    });
-
-    setLoading(false);
     return () => {
-      unsubUser();
-      unsubHoldings();
-      unsubOrders();
+      socket.off(channel, handleUpdate);
     };
-  }, [user]);
+  }, [user?.uid]);
 
-  return { 
-    cashBalance, 
-    startingBalance, 
-    longHoldings, 
-    shortHoldings, 
-    recentOrders: recentOrders || [], 
-    loading 
+  return {
+    cashBalance,
+    startingBalance,
+    longHoldings,
+    shortHoldings,
+    recentOrders,
+    loading,
+    refreshUserData
   };
 }

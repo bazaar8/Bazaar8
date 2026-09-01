@@ -870,6 +870,27 @@ app.post('/api/adminImportUsers', authMiddleware, verifyAdmin, handleCallable(as
   return { success: true };
 }));
 
+app.post('/api/adminImportNews', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const events = data.events || [];
+  if (!Array.isArray(events) || events.length === 0) {
+    throw new Error("No valid news events found to import.");
+  }
+
+  for (const ev of events) {
+    const evtId = "news_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
+    await NewsEvent.create({
+      eventId: evtId,
+      headline: ev.headline,
+      stockImpacts: ev.stockImpacts || {},
+      durationMinutes: Number(ev.durationMinutes) || 15,
+      status: "draft",
+      startTime: 0,
+      createdAt: Date.now()
+    });
+  }
+  return { success: true, count: events.length };
+}));
+
 app.post('/api/adminCreateIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
   await IPO.create({
     ipoId: "ipo_" + Date.now(),
@@ -879,6 +900,7 @@ app.post('/api/adminCreateIPO', authMiddleware, verifyAdmin, handleCallable(asyn
     lotSize: data.lotSize,
     totalLots: data.totalLots,
     listingPremiumPct: data.listingPremiumPct,
+    sector: data.sector || "Upcoming",
     status: "upcoming",
     openTime: data.openTime,
     closeTime: data.closeTime,

@@ -3,6 +3,7 @@ import { httpsCallable, API_URL } from "../config/api";
 import { socket } from "../config/socket";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme"; 
+import { useNotifications } from "../context/NotificationContext"; // <-- Added Notifications
 import { 
   LayoutDashboard, Users, Newspaper, 
   Sparkles, Power, Pause, Play, ShieldAlert, LogOut,
@@ -25,6 +26,7 @@ type Tab = 'dashboard' | 'market' | 'participants' | 'stocks' | 'logs' | 'news' 
 export default function AdminDashboard() {
   const { logoutUser, profile } = useAuth();
   const { isDark, toggleTheme } = useTheme(); 
+  const { notify } = useNotifications(); // <-- Initialize Notifications
   
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [forceTicker, setForceTicker] = useState("");
@@ -44,6 +46,7 @@ export default function AdminDashboard() {
 
   const [ipoName, setIpoName] = useState("");
   const [ipoTicker, setIpoTicker] = useState("");
+  const [ipoSector, setIpoSector] = useState(""); // <-- Added Sector State
   const [ipoPrice, setIpoPrice] = useState("");
   const [ipoLotSize, setIpoLotSize] = useState(""); 
   const [ipoTotalLots, setIpoTotalLots] = useState(""); 
@@ -64,7 +67,6 @@ export default function AdminDashboard() {
   const [adminLogs, setAdminLogs] = useState<any[]>([]);
   const [taxTreasury, setTaxTreasury] = useState<{ totalTaxCollected?: number; lastTradeTax?: number }>({ totalTaxCollected: 0 });
 
-  // Fetch Dashboard Data via REST Polling & Sockets
   useEffect(() => {
     if (profile?.role !== "admin") return;
 
@@ -102,7 +104,7 @@ export default function AdminDashboard() {
     };
 
     fetchAdminData();
-    const interval = setInterval(fetchAdminData, 5000); // Refresh data every 5s
+    const interval = setInterval(fetchAdminData, 5000);
 
     const handleLivePrices = (data: any) => {
       if (data.prices) setPrices(data.prices);
@@ -128,7 +130,8 @@ export default function AdminDashboard() {
     logAdminAction("SET_MARKET_STATE", { state: status });
     try {
       await httpsCallable('adminSetMarketStatus')({ status });
-    } catch (err: any) { alert("Error: " + err.message); } 
+      notify({ type: "alert", title: "Market Status", message: `Market is now ${status}`, impact: status === 'OPEN' ? 'positive' : 'negative' });
+    } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); } 
     finally { setProcessingAction(null); }
   };
 
@@ -138,8 +141,9 @@ export default function AdminDashboard() {
       logAdminAction("FORCE_PRICE", { ticker: forceTicker, newPrice: forcePrice });
       try {
         await httpsCallable('adminForceStockPrice')({ ticker: forceTicker.toUpperCase(), price: parseFloat(forcePrice) });
+        notify({ type: "alert", title: "Price Updated", message: `${forceTicker.toUpperCase()} forced to ₹${forcePrice}`, impact: "positive" });
         setForceTicker(""); setForcePrice("");
-      } catch (err: any) { alert("Error: " + err.message); } 
+      } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); } 
       finally { setProcessingAction(null); }
     }
   };
@@ -149,7 +153,8 @@ export default function AdminDashboard() {
     logAdminAction("TOGGLE_FREEZE", { targetUserId: uid, isFrozen });
     try {
       await httpsCallable('adminToggleUserFreeze')({ uid, isFrozen });
-    } catch (err: any) { alert("Error: " + err.message); } 
+      notify({ type: "alert", title: "User Updated", message: `User has been ${isFrozen ? 'frozen' : 'unfrozen'}.`, impact: "neutral" });
+    } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); } 
     finally { setProcessingAction(null); }
   };
 
@@ -159,7 +164,7 @@ export default function AdminDashboard() {
     
     const amount = parseFloat(amountStr);
     if (isNaN(amount) || amount < 0) {
-      alert("Please enter a valid positive number.");
+      notify({ type: "alert", title: "Invalid Input", message: "Please enter a valid positive number.", impact: "negative" });
       return;
     }
     
@@ -168,21 +173,25 @@ export default function AdminDashboard() {
       logAdminAction("ADJUST_USER_BALANCE", { targetUserId: uid, newBalance: amount, reason: "Admin manual reset" });
       try {
         await httpsCallable('adminAdjustCash')({ uid, amount });
-      } catch (err: any) { alert("Error adjusting cash: " + err.message); } 
+        notify({ type: "alert", title: "Cash Adjusted", message: `User balance set to ₹${amount.toLocaleString()}`, impact: "positive" });
+      } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); } 
       finally { setProcessingAction(null); }
     }
   };
 
   const handleResetSystem = async () => {
     if (!window.confirm("WARNING: This will wipe all orders, holdings, IPOs, news, and reset all user cash. This cannot be undone.\n\nPress OK to proceed.")) return;
-    if (window.prompt("Type RESET to confirm complete system wipe:") !== "RESET") { alert("Factory reset cancelled."); return; }
+    if (window.prompt("Type RESET to confirm complete system wipe:") !== "RESET") { 
+      notify({ type: "alert", title: "Cancelled", message: "Factory reset cancelled.", impact: "neutral" });
+      return; 
+    }
     
     setProcessingAction("reset");
     logAdminAction("FACTORY_RESET", { target: "ENTIRE_SYSTEM" });
     try {
       await httpsCallable('adminResetSystem')();
-      alert("System has been completely reset.");
-    } catch (err: any) { alert("Error resetting system: " + err.message); } 
+      notify({ type: "alert", title: "System Reset", message: "System has been completely wiped.", impact: "positive" });
+    } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); } 
     finally { setProcessingAction(null); }
   };
 
@@ -192,7 +201,8 @@ export default function AdminDashboard() {
       logAdminAction("DELETE_STOCK", { ticker });
       try {
         await httpsCallable('adminDeleteStock')({ ticker });
-      } catch (err: any) { alert("Error deleting stock: " + err.message); }
+        notify({ type: "alert", title: "Stock Deleted", message: `${ticker} removed from exchange.`, impact: "neutral" });
+      } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); }
       finally { setProcessingAction(null); }
     }
   };
@@ -209,7 +219,8 @@ export default function AdminDashboard() {
       await httpsCallable('adminUpdateStock')({ 
         ticker, basePrice: newBase, volatility: newVol, name: currentData.name || ticker, sector: currentData.sector || "General"
       });
-    } catch (err: any) { alert("Error updating stock: " + err.message); }
+      notify({ type: "alert", title: "Stock Updated", message: `${ticker} parameters updated.`, impact: "positive" });
+    } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); }
     finally { setProcessingAction(null); }
   };
 
@@ -219,9 +230,9 @@ export default function AdminDashboard() {
     logAdminAction("BULK_PASSWORD_RESET", { target: "ALL_STUDENTS" });
     try {
       await httpsCallable('adminSendPasswordResets')({});
-      alert(`Password reset requests dispatched to backend!`);
+      notify({ type: "alert", title: "Emails Sent", message: "Password reset requests dispatched!", impact: "positive" });
     } catch(e: any) {
-      alert("Error: " + e.message);
+      notify({ type: "alert", title: "Error", message: e.message, impact: "negative" });
     }
     setProcessingAction(null);
   };
@@ -301,19 +312,7 @@ export default function AdminDashboard() {
       "Headline,RELIANCE,TCS,HDFCBANK,ICICIBANK,INFY,BHARTIARTL,ITC,SBIN,LT,MARUTI,TATAMOTORS,SUNPHARMA,AXISBANK,TITAN,TATASTEEL",
       '"RBI Unexpectedly Cuts Repo Rate by 25bps Boosting Liquidity and Credit Growth",0,0,3.8,4.2,0,0,0.5,4.5,2.0,1.8,2.2,0,3.9,1.5,0',
       '"Reliance Inks ₹18000Cr Strategic Green Energy & Solar Gigafactory Pact",5.5,0,0.5,0.8,0,0,0,1.0,2.8,0,0,0,0.5,0,0',
-      '"IT Giant Secures $1.4B Generative AI and Cloud Transformation Deal with Fortune 500",0,4.9,0,0,5.4,0,0,0,0,0,0,0,0,0,0',
-      '"Crude Oil Spikes 8% Above $90/bbl Amid Middle East Supply Disruptions",-3.8,0,-1.2,-1.0,0,0,0,-1.5,-1.5,-2.8,-3.2,0,-1.0,0,-1.5',
-      '"Cabinet Approves ₹15000Cr High-Speed Rail Corridor and Defense Infrastructure Project",0,0,0.8,1.0,0,0,0,1.8,6.8,0,3.5,0,0.8,0,4.2',
-      '"Auto Index Surges on Record Festive Season Vehicle Deliveries and EV Subsidies",0,0,0,0,0,0,0,0,0,4.8,5.5,0,0,0,0',
-      '"Telecom Regulatory Authority Approves Industry-Wide Tariff Hike of 18%",0,0,0,0,0,7.2,0,0,0,0,0,0,0,0,0',
-      '"US FDA Issues Zero Form 483 Observations for Key Manufacturing Facility",0,0,0,0,0,0,0,0,0,0,0,6.5,0,0,0',
-      '"FMCG Demand Rebounds with Strong Rural Volume Growth and Normal Monsoon",0,0,0,0,0,0,4.8,0,0,1.2,0,0,0,2.5,0',
-      '"Steel Ministry Imposes 12% Anti-Dumping Duty on Cheap Imported Hot-Rolled Coils",0,0,0,0,0,0,0,0,1.0,0,0,0,0,0,7.5',
-      '"HDFC Bank & ICICI Bank Post Stellar Q2 Results with 24% Net Profit Surge",0,0,4.6,5.0,0,0,0,2.5,0,0,0,0,3.8,0,0',
-      '"Global Semiconductor Supply Shortages Hit Production Targets Across Automakers",0,0,0,0,0,0,0,0,-1.2,-3.5,-4.2,0,0,0,0',
-      '"Government Announces Major Gold Import Duty Cut Ahead of Wedding Season",0,0,0,0,0,0,0,0,0,0,0,0,0,6.2,0',
-      '"SEBI Tightens Derivatives and F&O Regulations Curbing Retail Speculation Volume",0,0,-2.2,-1.8,0,0,0,-1.5,0,0,0,0,-2.0,0,0',
-      '"India GDP Growth Beats Consensus Estimates Accelerating to 7.8% in Latest Quarter",2.5,1.5,3.2,3.5,1.8,1.2,1.5,3.8,4.0,2.5,2.8,1.0,2.9,2.2,2.0'
+      '"IT Giant Secures $1.4B Generative AI and Cloud Transformation Deal with Fortune 500",0,4.9,0,0,5.4,0,0,0,0,0,0,0,0,0,0'
     ].join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -331,8 +330,7 @@ export default function AdminDashboard() {
     const csvContent = [
       "Email,Password,Name,StartingBalance",
       "trader1@bazaar.com,Trader@2026,Aarav Sharma,1000000",
-      "trader2@bazaar.com,Trader@2026,Priya Patel,1000000",
-      "trader3@bazaar.com,Trader@2026,Rohan Mehta,1000000"
+      "trader2@bazaar.com,Trader@2026,Priya Patel,1000000"
     ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -349,9 +347,7 @@ export default function AdminDashboard() {
     const csvContent = [
       "Ticker,Name,Sector,BasePrice,Volatility",
       "RELIANCE,Reliance Industries,Energy,2950.0,0.002",
-      "TCS,Tata Consultancy Services,IT,4150.0,0.0018",
-      "HDFCBANK,HDFC Bank,Financial Services,1720.0,0.0015",
-      "INFY,Infosys,IT,1850.0,0.0022"
+      "TCS,Tata Consultancy Services,IT,4150.0,0.0018"
     ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -373,8 +369,9 @@ export default function AdminDashboard() {
       else if (csvType === "users") await httpsCallable( 'adminImportUsers')({ users: parsedData });
       else if (csvType === "stocks") await httpsCallable('adminImportStocks')({ stocks: parsedData });
       
-      setParsedData([]); setCsvText(""); alert(`Successfully imported ${parsedData.length} records!`);
-    } catch (err: any) { alert("Import Failed: " + err.message); } 
+      setParsedData([]); setCsvText(""); 
+      notify({ type: "alert", title: "Import Successful", message: `Imported ${parsedData.length} records!`, impact: "positive" });
+    } catch (err: any) { notify({ type: "alert", title: "Import Failed", message: err.message, impact: "negative" }); } 
     finally { setProcessingAction(null); }
   };
 
@@ -382,7 +379,10 @@ export default function AdminDashboard() {
     const ticker = impactTicker.toUpperCase().trim();
     const val = parseFloat(impactValue);
     if (!ticker) return;
-    if (isNaN(val)) return alert("Please enter a valid percentage impact (e.g. 5.0 or -3.5)");
+    if (isNaN(val)) {
+      notify({ type: "alert", title: "Invalid Impact", message: "Please enter a valid percentage (e.g. 5.0 or -3.5)", impact: "negative" });
+      return;
+    }
     setSingleImpacts(prev => ({ ...prev, [ticker]: val }));
     setImpactValue("");
   };
@@ -397,7 +397,10 @@ export default function AdminDashboard() {
 
   const handleCreateSingleNews = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!singleHeadline.trim()) return alert("Please enter a news headline.");
+    if (!singleHeadline.trim()) {
+      notify({ type: "alert", title: "Missing Input", message: "Please enter a news headline.", impact: "negative" });
+      return;
+    }
     setProcessingAction('create-single-news');
     logAdminAction("CREATE_SINGLE_NEWS", { headline: singleHeadline, stockImpacts: singleImpacts });
     try {
@@ -409,9 +412,9 @@ export default function AdminDashboard() {
       setSingleHeadline("");
       setSingleImpacts({});
       setSingleDuration(15);
-      alert("✅ News event added to queue as DRAFT! You can trigger it anytime.");
+      notify({ type: "news", title: "News Queued", message: "News event added to queue as DRAFT!", impact: "positive" });
     } catch (err: any) {
-      alert("Error creating news: " + err.message);
+      notify({ type: "alert", title: "Error creating news", message: err.message, impact: "negative" });
     } finally {
       setProcessingAction(null);
     }
@@ -423,8 +426,9 @@ export default function AdminDashboard() {
     logAdminAction("FIRE_NEWS", { eventId: event.eventId || event.id, headline: event.headline });
     try { 
       await releaseEventNow(event.eventId || event.id, event, event.durationMinutes || eventDuration); 
+      notify({ type: "news", title: "News Fired", message: "Event pushed to live wire!", impact: "positive" });
     } catch (err: any) { 
-      alert("Error triggering news: " + err.message); 
+      notify({ type: "alert", title: "Error triggering news", message: err.message, impact: "negative" });
     } finally { 
       setProcessingAction(null); 
     }
@@ -435,9 +439,9 @@ export default function AdminDashboard() {
     logAdminAction("TRIGGER_NEXT_NEWS", {});
     try {
       const res: any = await triggerNextNewsEvent();
-      alert(`⚡ Triggered event: "${res?.data?.headline || 'Next in Queue'}" on the live wire!`);
+      notify({ type: "news", title: "News Fired", message: `Triggered event: "${res?.data?.headline || 'Next in Queue'}" on the live wire!`, impact: "positive" });
     } catch (err: any) {
-      alert("Error triggering next news: " + err.message);
+      notify({ type: "alert", title: "Error", message: err.message, impact: "negative" });
     } finally {
       setProcessingAction(null);
     }
@@ -449,9 +453,9 @@ export default function AdminDashboard() {
     logAdminAction("TRIGGER_ALL_NEWS", {});
     try {
       const res: any = await triggerAllNewsEvents();
-      alert(`⚡ Successfully triggered ${res?.data?.count || 'all'} queued news events on the live wire!`);
+      notify({ type: "news", title: "Bulk News Fired", message: `Successfully triggered ${res?.data?.count || 'all'} queued news events!`, impact: "positive" });
     } catch (err: any) {
-      alert("Error triggering all news: " + err.message);
+      notify({ type: "alert", title: "Error", message: err.message, impact: "negative" });
     } finally {
       setProcessingAction(null);
     }
@@ -463,8 +467,9 @@ export default function AdminDashboard() {
     logAdminAction("DELETE_SINGLE_NEWS", { eventId });
     try {
       await deleteSingleNewsEvent(eventId);
+      notify({ type: "alert", title: "News Deleted", message: "Event removed from queue.", impact: "neutral" });
     } catch (err: any) {
-      alert("Error deleting news: " + err.message);
+      notify({ type: "alert", title: "Error", message: err.message, impact: "negative" });
     } finally {
       setProcessingAction(null);
     }
@@ -473,7 +478,11 @@ export default function AdminDashboard() {
   const handleCancelNews = async (eventId: string) => {
     setProcessingAction(`cancel-${eventId}`);
     logAdminAction("CANCEL_NEWS", { eventId });
-    try { await cancelEvent(eventId); } catch (err: any) { alert("Error cancelling news: " + err.message); } finally { setProcessingAction(null); }
+    try { 
+      await cancelEvent(eventId); 
+      notify({ type: "alert", title: "News Cancelled", message: "Live event has been halted.", impact: "neutral" });
+    } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); } 
+    finally { setProcessingAction(null); }
   };
 
   const handleDeleteAllNews = async () => {
@@ -482,9 +491,9 @@ export default function AdminDashboard() {
     logAdminAction("DELETE_ALL_NEWS", {});
     try {
       await deleteAllNewsEvents();
-      alert("All news events have been successfully wiped from the database!");
+      notify({ type: "alert", title: "Queue Cleared", message: "All news events have been wiped.", impact: "neutral" });
     } catch (err: any) {
-      alert("Error deleting news: " + err.message);
+      notify({ type: "alert", title: "Error", message: err.message, impact: "negative" });
     } finally {
       setProcessingAction(null);
     }
@@ -499,6 +508,7 @@ export default function AdminDashboard() {
       await httpsCallable('adminCreateIPO')({
         name: ipoName, 
         ticker: ipoTicker.toUpperCase(), 
+        sector: ipoSector || "Upcoming", // <-- Pass Sector to backend
         price: parseFloat(ipoPrice) || 0, 
         lotSize: parseInt(ipoLotSize, 10) || 1,           
         totalLots: parseInt(ipoTotalLots, 10) || 1,       
@@ -507,9 +517,10 @@ export default function AdminDashboard() {
         closeTime: ipoCloseTime ? new Date(ipoCloseTime).getTime() : Date.now() + 3600000,
         listTime: ipoListTime ? new Date(ipoListTime).getTime() : Date.now() + 7200000
       });
-      setIpoName(""); setIpoTicker(""); setIpoPrice(""); setIpoLotSize(""); setIpoTotalLots(""); setIpoPremium(""); setIpoOpenTime(""); setIpoCloseTime(""); setIpoListTime("");
-      alert("IPO Scheduled & Initialized!");
-    } catch (err: any) { alert("Error creating IPO: " + err.message); } finally { setProcessingAction(null); }
+      setIpoName(""); setIpoTicker(""); setIpoSector(""); setIpoPrice(""); setIpoLotSize(""); setIpoTotalLots(""); setIpoPremium(""); setIpoOpenTime(""); setIpoCloseTime(""); setIpoListTime("");
+      notify({ type: "ipo", title: "IPO Scheduled", message: "IPO has been initialized successfully!", impact: "positive" });
+    } catch (err: any) { notify({ type: "alert", title: "Error creating IPO", message: err.message, impact: "negative" }); } 
+    finally { setProcessingAction(null); }
   };
 
   const handleIPOAction = async (ipoId: string, action: 'close' | 'allot' | 'list') => {
@@ -523,7 +534,9 @@ export default function AdminDashboard() {
       } else {
         await httpsCallable('listIPO')({ ipoId });
       }
-    } catch (err: any) { alert(`Error during ${action}: ` + err.message); } finally { setProcessingAction(null); }
+      notify({ type: "ipo", title: "IPO Status Updated", message: `Successfully executed ${action}.`, impact: "positive" });
+    } catch (err: any) { notify({ type: "alert", title: "Error", message: err.message, impact: "negative" }); } 
+    finally { setProcessingAction(null); }
   };
 
   const [editingGmpId, setEditingGmpId] = useState<string | null>(null);
@@ -538,8 +551,9 @@ export default function AdminDashboard() {
       await httpsCallable('adminUpdateIPOGMP')({ ipoId, listingPremiumPct: newGmp });
       setEditingGmpId(null);
       setGmpValue("");
+      notify({ type: "ipo", title: "GMP Updated", message: `GMP for ${ticker} updated to ${newGmp}%`, impact: "positive" });
     } catch (err: any) {
-      alert("Failed to update GMP: " + err.message);
+      notify({ type: "alert", title: "Error", message: err.message, impact: "negative" });
     } finally {
       setProcessingAction(null);
     }
@@ -1022,10 +1036,9 @@ export default function AdminDashboard() {
               </div>
               
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* LEFT COLUMN: NEWS COMPOSER (SINGLE OR BULK) */}
+                {/* LEFT COLUMN: NEWS COMPOSER */}
                 <div className="lg:col-span-1 terminal-card p-5 space-y-4 h-fit">
                   
-                  {/* Mode Switcher Tabs */}
                   <div className="flex bg-[var(--bg-root)] p-1 rounded border border-[var(--border-subtle)] font-mono text-[10px]">
                     <button
                       type="button"
@@ -1053,7 +1066,6 @@ export default function AdminDashboard() {
                     </button>
                   </div>
 
-                  {/* MODE 1: SINGLE NEWS COMPOSER */}
                   {newsInputMode === "single" && (
                     <form onSubmit={handleCreateSingleNews} className="space-y-4">
                       <div>
@@ -1070,7 +1082,6 @@ export default function AdminDashboard() {
                         />
                       </div>
 
-                      {/* Stock Impact Adder */}
                       <div className="space-y-2 bg-[var(--bg-root)] p-3 rounded border border-[var(--border-subtle)]">
                         <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase block">
                           Stock Price Impacts (%)
@@ -1117,7 +1128,6 @@ export default function AdminDashboard() {
                           </div>
                         </div>
 
-                        {/* List of Active Impacts */}
                         {Object.keys(singleImpacts).length > 0 ? (
                           <div className="flex flex-wrap gap-1.5 pt-1">
                             {Object.entries(singleImpacts).map(([tkr, val]) => (
@@ -1174,7 +1184,6 @@ export default function AdminDashboard() {
                     </form>
                   )}
 
-                  {/* MODE 2: BULK CSV IMPORTER */}
                   {newsInputMode === "bulk" && (
                     <div className="space-y-4">
                       <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
@@ -1294,7 +1303,6 @@ export default function AdminDashboard() {
                 {/* RIGHT COLUMN: EVENT QUEUE & TELEMETRY */}
                 <div className="lg:col-span-2 terminal-card overflow-hidden flex flex-col">
                   
-                  {/* Queue Control Header */}
                   <div className="p-4 border-b border-[var(--border-subtle)] bg-[var(--bg-root)] flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)] flex items-center gap-2">
@@ -1308,9 +1316,7 @@ export default function AdminDashboard() {
                       </h2>
                     </div>
 
-                    {/* Batch Trigger & Wipe Actions */}
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* Trigger Next in Queue */}
                       <button
                         type="button"
                         onClick={handleTriggerNextNews}
@@ -1326,7 +1332,6 @@ export default function AdminDashboard() {
                         <span>Trigger Next</span>
                       </button>
 
-                      {/* Trigger All Queued */}
                       {adminEvents.filter(e => e.status === "draft").length > 1 && (
                         <button
                           type="button"
@@ -1344,7 +1349,6 @@ export default function AdminDashboard() {
                         </button>
                       )}
 
-                      {/* Delete All News */}
                       {adminEvents.length > 0 && (
                         <button
                           type="button"
@@ -1364,7 +1368,6 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                   
-                  {/* Event Queue List */}
                   {adminEvents.length === 0 ? (
                     <div className="p-8 flex flex-col items-center justify-center text-[var(--text-muted)] py-16">
                       <Newspaper className="w-10 h-10 mb-2 opacity-30" />
@@ -1402,7 +1405,6 @@ export default function AdminDashboard() {
                                 </h3>
                               </div>
 
-                              {/* Status Badge */}
                               <span
                                 className={`px-2 py-0.5 text-[9px] font-mono font-bold uppercase rounded flex items-center gap-1 flex-shrink-0 ${
                                   isActive
@@ -1419,7 +1421,6 @@ export default function AdminDashboard() {
                               </span>
                             </div>
 
-                            {/* Stock Impacts Chips */}
                             <div className="flex flex-wrap items-center gap-1.5 mt-2.5 text-[10px] font-mono">
                               <span className="text-[9px] text-[var(--text-muted)] uppercase">Impacts:</span>
                               {Object.keys(evt.stockImpacts || {}).length > 0 ? (
@@ -1443,7 +1444,6 @@ export default function AdminDashboard() {
                               </span>
                             </div>
 
-                            {/* Action Buttons */}
                             <div className="flex items-center justify-between mt-3 pt-3 border-t border-[var(--border-subtle)] font-mono text-[10px]">
                               <span className="text-[9px] text-[var(--text-muted)]">
                                 {isDraft
@@ -1459,7 +1459,6 @@ export default function AdminDashboard() {
                                       onClick={() => handleFireNews(evt)}
                                       disabled={processingAction === `fire-${evt.eventId || evt.id}`}
                                       className="px-3 py-1 bg-amber-400 hover:bg-amber-300 text-black font-bold uppercase rounded flex items-center gap-1 transition-all shadow-sm"
-                                      title="Trigger this event now"
                                     >
                                       {processingAction === `fire-${evt.eventId || evt.id}` ? (
                                         <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />
@@ -1474,7 +1473,6 @@ export default function AdminDashboard() {
                                       onClick={() => handleDeleteSingleNews(evt.eventId || evt.id, evt.headline)}
                                       disabled={processingAction === `delete-${evt.eventId || evt.id}`}
                                       className="p-1 text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
-                                      title="Delete draft from queue"
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
                                     </button>
@@ -1518,29 +1516,34 @@ export default function AdminDashboard() {
                 <div className="xl:col-span-1 terminal-card p-5 space-y-4 h-fit">
                   <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)] border-b border-[var(--border-subtle)] pb-2">Schedule Offering</h2>
                   <div className="space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div className="col-span-1">
+                    {/* UPDATED IPO GRID TO INCLUDE SECTOR */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="col-span-1 sm:col-span-1">
                         <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Company Name</label>
                         <input type="text" value={ipoName} onChange={(e) => setIpoName(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Quantum AI" />
                       </div>
-                      <div className="col-span-1">
+                      <div className="col-span-1 sm:col-span-1">
                         <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Ticker</label>
                         <input type="text" value={ipoTicker} onChange={(e) => setIpoTicker(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded uppercase focus:outline-none focus:border-[#f59e0b]" placeholder="QAI" />
+                      </div>
+                      <div className="col-span-1 sm:col-span-1">
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Sector</label>
+                        <input type="text" value={ipoSector} onChange={(e) => setIpoSector(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Tech" />
                       </div>
                     </div>
                     
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <div className="col-span-1">
-                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Price per Share</label>
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Price / Share</label>
                         <input type="number" value={ipoPrice} onChange={(e) => setIpoPrice(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="₹" />
                       </div>
                       <div className="col-span-1">
-                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Lot Size (Shares)</label>
+                        <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Lot Size</label>
                         <input type="number" value={ipoLotSize} onChange={(e) => setIpoLotSize(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Qty" />
                       </div>
                       <div className="col-span-1">
                         <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Total Lots</label>
-                        <input type="number" value={ipoTotalLots} onChange={(e) => setIpoTotalLots(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Max Winners" />
+                        <input type="number" value={ipoTotalLots} onChange={(e) => setIpoTotalLots(e.target.value)} className="w-full mt-1 px-3 py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-main)] text-xs rounded focus:outline-none focus:border-[#f59e0b]" placeholder="Max Lots" />
                       </div>
                     </div>
 

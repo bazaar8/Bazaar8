@@ -87,10 +87,13 @@ export default function AdminDashboard() {
         if (iposRes.ok) setIpos((await iposRes.json()).data || []);
         if (newsRes.ok) setAdminEvents((await newsRes.json()).data || []);
         if (logsRes.ok) setAdminLogs((await logsRes.json()).data || []);
+        
         if (stateRes.ok) {
           const stateData = await stateRes.json();
           if (stateData.data) {
-            setTaxTreasury({ totalTaxCollected: stateData.data.totalTaxCollected });
+            setTaxTreasury({ totalTaxCollected: stateData.data.totalTaxCollected || 0 });
+            if (stateData.data.livePrices) setPrices(stateData.data.livePrices);
+            if (stateData.data.marketStatus) setMarketState(stateData.data.marketStatus);
           }
         }
       } catch (err) {

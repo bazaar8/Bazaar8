@@ -8,26 +8,28 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "bazaar_jwt_secure_secret_2026";
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://...";
+const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/bazaar";
 const PORT = process.env.PORT || 8080;
 
 const app = express();
 app.use(cors({ origin: "*" }));
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "2mb" }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" },
-  transports: ["websocket", "polling"]
+  transports: ["websocket", "polling"],
+  pingInterval: 10000,
+  pingTimeout: 5000
 });
 
 // --- MONGOOSE SCHEMAS ---
 const UserSchema = new mongoose.Schema({
-  uid: { type: String, unique: true, required: true },
+  uid: { type: String, unique: true, required: true, index: true },
   email: { type: String, unique: true, required: true },
   password: { type: String, required: true },
   name: { type: String, default: "Trader" },
-  role: { type: String, enum: ["student", "admin"], default: "student" },
+  role: { type: String, enum: ["student", "admin"], default: "student", index: true },
   startingBalance: { type: Number, default: 1000000 },
   cashBalance: { type: Number, default: 1000000 },
   isFrozen: { type: Boolean, default: false },
@@ -46,8 +48,8 @@ const UserSchema = new mongoose.Schema({
 });
 
 const OrderSchema = new mongoose.Schema({
-  orderId: { type: String, unique: true },
-  uid: String,
+  orderId: { type: String, unique: true, index: true },
+  uid: { type: String, index: true },
   ticker: String,
   side: { type: String, enum: ["BUY", "SELL", "SHORT", "COVER"] },
   quantity: Number,
@@ -58,11 +60,11 @@ const OrderSchema = new mongoose.Schema({
   realizedPnL: Number,
   pnlPct: Number,
   taxDeducted: Number,
-  timestamp: { type: Number, default: Date.now }
+  timestamp: { type: Number, default: Date.now, index: -1 }
 });
 
 const IPOSchema = new mongoose.Schema({
-  ipoId: { type: String, unique: true },
+  ipoId: { type: String, unique: true, index: true },
   name: String,
   ticker: String,
   price: Number,
@@ -71,7 +73,7 @@ const IPOSchema = new mongoose.Schema({
   listingPremiumPct: Number,
   sector: { type: String, default: "Upcoming" },
   allotmentType: { type: String, default: "lottery" },
-  status: { type: String, default: "upcoming" },
+  status: { type: String, default: "upcoming", index: true },
   totalSubscribedLots: { type: Number, default: 0 },
   totalSubscribedShares: { type: Number, default: 0 },
   subscriptionCount: { type: Number, default: 0 },
@@ -98,11 +100,11 @@ const IPOSchema = new mongoose.Schema({
 });
 
 const NewsEventSchema = new mongoose.Schema({
-  eventId: { type: String, unique: true },
+  eventId: { type: String, unique: true, index: true },
   headline: String,
   stockImpacts: { type: Object, default: {} },
   durationMinutes: { type: Number, default: 15 },
-  status: { type: String, default: "draft" },
+  status: { type: String, default: "draft", index: true },
   startTime: { type: Number, default: 0 },
   firedAt: { type: Number, default: 0 },
   createdAt: { type: Number, default: Date.now },
@@ -114,15 +116,13 @@ const SystemStateSchema = new mongoose.Schema({
   key: { type: String, unique: true },
   marketStatus: { type: String, default: "CLOSED" },
   livePrices: { type: Object, default: {} },
-  priceHistory: { type: Object, default: {} },
   marketInfluence: { type: Object, default: {} },
   totalTaxCollected: { type: Number, default: 0 },
-  lastTradeTax: { type: Number, default: 0 },
-  rankings: { type: Array, default: [] }
+  lastTradeTax: { type: Number, default: 0 }
 });
 
 const AdminLogSchema = new mongoose.Schema({
-  timestamp: { type: Number, default: Date.now },
+  timestamp: { type: Number, default: Date.now, index: -1 },
   adminEmail: String,
   action: String,
   details: Object
@@ -135,11 +135,11 @@ const NewsEvent = mongoose.model("NewsEvent", NewsEventSchema);
 const SystemState = mongoose.model("SystemState", SystemStateSchema);
 const AdminLog = mongoose.model("AdminLog", AdminLogSchema);
 
-// In-memory runtime cache for microsecond execution
+// In-memory runtime state
 let currentMarketStatus = "CLOSED";
 let cachedLivePrices = {};
 let cachedInfluences = {};
-let cachedPriceHistory = {};
+let cachedPriceHistory = {}; // Bounded to 60 data points per ticker
 let totalTaxCollected = 0;
 let lastTradeTax = 0;
 let cachedRankings = [];
@@ -147,21 +147,22 @@ let tickCount = 0;
 let forceBasePriceReset = false;
 
 // Connect to MongoDB
-mongoose.connect(MONGO_URI).then(async () => {
+mongoose.connect(MONGO_URI, {
+  maxPoolSize: 20,
+  serverSelectionTimeoutMS: 5000
+}).then(async () => {
   console.log(" Connected to MongoDB Atlas");
   const sys = await SystemState.findOneAndUpdate(
     { key: "main" },
     {},
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
   currentMarketStatus = sys.marketStatus || "CLOSED";
   cachedLivePrices = sys.livePrices || {};
-  cachedPriceHistory = sys.priceHistory || {};
   cachedInfluences = sys.marketInfluence || {};
   totalTaxCollected = sys.totalTaxCollected || 0;
-  cachedRankings = sys.rankings || [];
 
-  // Default Admin Check
+  // Ensure Master Admin exists
   const admin = await User.findOne({ role: "admin" });
   if (!admin) {
     const hashed = await bcrypt.hash("admin@123", 10);
@@ -182,21 +183,20 @@ mongoose.connect(MONGO_URI).then(async () => {
 
 // --- SIMULATION ENGINES ---
 function startSimulationEngines() {
-  // 1. AUTO-IPO ENGINE (2s tick)
+  // 1. AUTO-IPO ENGINE (Every 3 seconds)
   setInterval(async () => {
     try {
       const now = Date.now();
       const ipos = await IPO.find({ status: { $in: ["upcoming", "open", "closed", "allotted"] } });
 
       for (const ipo of ipos) {
-        // Auto-open
         if (ipo.status === "upcoming" && ipo.openTime && now >= ipo.openTime) {
           ipo.status = "open";
           await ipo.save();
           const evtId = "news_" + Date.now();
           await NewsEvent.create({
             eventId: evtId,
-            headline: ` New IPO Open: ${ipo.ticker} (${ipo.name || ipo.ticker}) is now OPEN for bidding at ${ipo.price}!`,
+            headline: ` New IPO Open: ${ipo.ticker} (${ipo.name || ipo.ticker}) is now OPEN for bidding at ₹${ipo.price}!`,
             status: "active",
             startTime: now,
             createdAt: now,
@@ -207,30 +207,7 @@ function startSimulationEngines() {
           io.emit("newsUpdate", { type: "new", ipo: ipo.ticker });
         }
 
-        // Live subscription rates
-        if (["upcoming", "open", "closed"].includes(ipo.status)) {
-          let liveLots = 0;
-          let liveShares = 0;
-          const lotSize = Number(ipo.lotSize) || 1;
-          ipo.subscriptions.forEach(s => {
-            const rl = Number(s.requestedLots) || Math.max(1, Math.floor((Number(s.requestedShares) || 1) / lotSize));
-            liveLots += rl;
-            liveShares += (rl * lotSize);
-          });
-          const totalOffered = Number(ipo.totalLots) || 1;
-          const liveRate = Number((liveLots / totalOffered).toFixed(2));
-          const liveCount = ipo.subscriptions.length;
-
-          if (ipo.totalSubscribedLots !== liveLots || ipo.subscriptionRate !== liveRate || ipo.subscriptionCount !== liveCount) {
-            ipo.totalSubscribedLots = liveLots;
-            ipo.totalSubscribedShares = liveShares;
-            ipo.subscriptionCount = liveCount;
-            ipo.subscriptionRate = liveRate;
-            await ipo.save();
-          }
-        }
-
-        // Lottery Allotment Trigger
+        // Trigger Allotment
         const shouldAllot = ipo.triggerAllotment || 
           ((ipo.status === "open" || ipo.status === "closed") && ipo.closeTime && now >= ipo.closeTime);
 
@@ -242,51 +219,27 @@ function startSimulationEngines() {
           if (ipo.subscriptions.length === 0) {
             ipo.status = "allotted";
             ipo.triggerAllotment = false;
-            ipo.totalSubscribedLots = 0;
-            ipo.subscriptionRate = 0;
             await ipo.save();
             continue;
           }
 
-          let totalReqLots = 0;
-          const applicants = ipo.subscriptions.map((sub, index) => {
-            const reqLots = Number(sub.requestedLots) || Math.max(1, Math.floor((Number(sub.requestedShares) || 1) / lotSize));
-            totalReqLots += reqLots;
-            return {
-              subIndex: index,
-              uid: sub.uid,
-              requestedLots: reqLots,
-              investedAmount: Number(sub.investedAmount) || (reqLots * lotSize * pricePerShare)
-            };
-          });
-
-          const subRate = Number((totalReqLots / availableLots).toFixed(2));
           let lotteryPool = [];
-          applicants.forEach(app => {
-            for (let i = 0; i < app.requestedLots; i++) {
-              lotteryPool.push({ subIndex: app.subIndex, uid: app.uid });
+          ipo.subscriptions.forEach((sub, index) => {
+            const reqLots = Number(sub.requestedLots) || Math.max(1, Math.floor((Number(sub.requestedShares) || 1) / lotSize));
+            for (let i = 0; i < reqLots; i++) {
+              lotteryPool.push({ subIndex: index, uid: sub.uid });
             }
           });
 
-          // Multi-pass cryptographic shuffle
-          for (let pass = 0; pass < 3; pass++) {
-            for (let i = lotteryPool.length - 1; i > 0; i--) {
-              const j = crypto.randomInt(0, i + 1);
-              [lotteryPool[i], lotteryPool[j]] = [lotteryPool[j], lotteryPool[i]];
-            }
+          // Cryptographic Lottery Shuffle
+          for (let i = lotteryPool.length - 1; i > 0; i--) {
+            const j = crypto.randomInt(0, i + 1);
+            [lotteryPool[i], lotteryPool[j]] = [lotteryPool[j], lotteryPool[i]];
           }
 
-          let lotsToAward;
-          if (totalReqLots > availableLots) {
-            lotsToAward = availableLots;
-          } else {
-            const randomRatio = 0.40 + (crypto.randomInt(0, 50) / 100);
-            lotsToAward = Math.max(1, Math.min(totalReqLots, Math.round(totalReqLots * randomRatio)));
-          }
-
-          const winningTickets = lotteryPool.slice(0, lotsToAward);
+          const lotsToAward = Math.min(lotteryPool.length, availableLots);
           const winCounts = {};
-          winningTickets.forEach(ticket => {
+          lotteryPool.slice(0, lotsToAward).forEach(ticket => {
             winCounts[ticket.subIndex] = (winCounts[ticket.subIndex] || 0) + 1;
           });
 
@@ -304,43 +257,29 @@ function startSimulationEngines() {
             sub.refundedAmount = refundAmount;
             sub.allotmentTimestamp = now;
 
-            const u = await User.findOne({ uid: sub.uid });
-            if (u) {
-              if (refundAmount > 0) u.cashBalance += refundAmount;
-              if (allocatedShares > 0) {
-                const existing = u.holdings.find(h => h.ticker === ipo.ticker && h.positionType === "long");
-                if (existing) {
-                  existing.quantity += allocatedShares;
-                } else {
-                  u.holdings.push({ ticker: ipo.ticker, positionType: "long", quantity: allocatedShares, avgPrice: pricePerShare });
+            if (refundAmount > 0 || allocatedShares > 0) {
+              const u = await User.findOne({ uid: sub.uid });
+              if (u) {
+                if (refundAmount > 0) u.cashBalance += refundAmount;
+                if (allocatedShares > 0) {
+                  const existing = u.holdings.find(h => h.ticker === ipo.ticker && h.positionType === "long");
+                  if (existing) existing.quantity += allocatedShares;
+                  else u.holdings.push({ ticker: ipo.ticker, positionType: "long", quantity: allocatedShares, avgPrice: pricePerShare });
                 }
+                await u.save();
+                io.emit(`userUpdate:${sub.uid}`, { cashBalance: u.cashBalance, holdings: u.holdings });
               }
-              await u.save();
-              io.emit(`userUpdate:${sub.uid}`, { cashBalance: u.cashBalance, holdings: u.holdings });
             }
           }
 
           ipo.status = "allotted";
           ipo.triggerAllotment = false;
-          ipo.totalSubscribedLots = totalReqLots;
-          ipo.subscriptionRate = subRate;
           ipo.allotmentCompletedAt = now;
           await ipo.save();
-
-          await NewsEvent.create({
-            eventId: "news_" + Date.now(),
-            headline: ` IPO Allotment Out: ${ipo.ticker} (${ipo.name || ipo.ticker}) was subscribed ${subRate}x! Lottery draw complete—shares & refunds credited.`,
-            status: "active",
-            startTime: now,
-            createdAt: now,
-            durationMinutes: 60,
-            targetTickers: [ipo.ticker],
-            impactDirection: "positive"
-          });
           io.emit("newsUpdate", { type: "allotted", ipo: ipo.ticker });
         }
 
-        // Listing Trigger
+        // Trigger Listing
         if ((ipo.status === "allotted" && ipo.listTime && now >= ipo.listTime) || ipo.triggerListing) {
           const listingPrice = Number(ipo.price) * (1 + ((Number(ipo.listingPremiumPct) || 0) / 100));
           ipo.status = "listed";
@@ -358,41 +297,51 @@ function startSimulationEngines() {
             timestamp: now
           };
 
-          await NewsEvent.create({
-            eventId: "news_" + Date.now(),
-            headline: ` IPO Listed: ${ipo.ticker} (${ipo.name || ipo.ticker}) listed at ${listingPrice.toFixed(2)} and is now LIVE for trading!`,
-            status: "active",
-            startTime: now,
-            createdAt: now,
-            durationMinutes: 60,
-            targetTickers: [ipo.ticker],
-            impactDirection: "positive"
-          });
           io.emit("newsUpdate", { type: "listed", ipo: ipo.ticker });
+          io.emit("livePrices", { prices: cachedLivePrices, marketStatus: currentMarketStatus });
         }
       }
     } catch (e) {
       console.error("Auto-IPO Engine Error:", e.message);
     }
-  }, 2000);
+  }, 3000);
 
-  // 2. LEADERBOARD ENGINE (3s tick)
+  // 2. LEADERBOARD ENGINE (Every 6 seconds - True Net Worth)
   setInterval(async () => {
     try {
-      const users = await User.find({ role: "student" }).lean();
+      const users = await User.find({ role: "student" }, "uid name email cashBalance startingBalance holdings").lean();
+      const activeIpos = await IPO.find({ status: { $in: ["upcoming", "open", "closed"] } }).lean();
       const leaderboard = [];
 
       for (const user of users) {
-        let longValue = 0, shortLiability = 0;
+        let longValue = 0;
+        let shortPnL = 0;
+        let blockedIpoFunds = 0;
+
+        // Long asset valuation & Short unrealized P&L
         (user.holdings || []).forEach(holding => {
           const currentPrice = cachedLivePrices[holding.ticker]?.price || holding.avgPrice;
-          if (holding.positionType === "long") longValue += holding.quantity * currentPrice;
-          else if (holding.positionType === "short") shortLiability += holding.quantity * currentPrice;
+          if (holding.positionType === "long") {
+            longValue += holding.quantity * currentPrice;
+          } else if (holding.positionType === "short") {
+            shortPnL += (holding.avgPrice - currentPrice) * holding.quantity;
+          }
         });
+
+        // Blocked IPO funds preservation
+        activeIpos.forEach(ipo => {
+          const mySub = (ipo.subscriptions || []).find(s => s.uid === user.uid);
+          if (mySub && !['won', 'lost', 'success', 'refunded'].includes(mySub.status)) {
+            const price = Number(ipo.price) || 0;
+            const lotSize = Number(ipo.lotSize) || 1;
+            const reqLots = Number(mySub.requestedLots) || Math.max(1, Math.floor((Number(mySub.requestedShares) || 1) / lotSize));
+            blockedIpoFunds += (reqLots * lotSize * price);
+          }
+        });
+
         const startingCapital = Number(user.startingBalance) || 1000000;
-        const totalValue = (Number(user.cashBalance) || 0) + longValue - shortLiability;
+        const totalValue = (Number(user.cashBalance) || 0) + longValue + shortPnL + blockedIpoFunds;
         const retPct = Number((((totalValue - startingCapital) / startingCapital) * 100).toFixed(2));
-        const pnlAmount = Number((totalValue - startingCapital).toFixed(2));
 
         leaderboard.push({
           uid: user.uid,
@@ -400,17 +349,19 @@ function startSimulationEngines() {
           portfolioValue: Number(totalValue.toFixed(2)),
           returnPct: retPct,
           pnl: retPct,
-          pnlAmount: pnlAmount
+          pnlAmount: Number((totalValue - startingCapital).toFixed(2))
         });
       }
 
       leaderboard.sort((a, b) => b.portfolioValue - a.portfolioValue);
       cachedRankings = leaderboard.map((entry, index) => ({ ...entry, rank: index + 1 }));
       io.emit("leaderboard", cachedRankings);
-    } catch (e) {}
-  }, 3000);
+    } catch (e) {
+      console.error("Leaderboard calculation error:", e.message);
+    }
+  }, 6000);
 
-  // 3. ULTRA-FAST MARKET SIMULATION ENGINE (500ms tick)
+  // 3. ULTRA-FAST MARKET SIMULATION & NEWS ENGINE (500ms tick)
   let lastBasePriceReset = Date.now();
   const TICK_INTERVAL_MS = 500;
 
@@ -421,12 +372,27 @@ function startSimulationEngines() {
       const now = Date.now();
       const finishedEvents = new Set();
 
-      let shouldResetBase = false;
-      if (now - lastBasePriceReset >= 180000) {
-        shouldResetBase = true;
-        lastBasePriceReset = now;
+      // Top-level news expiration (Evaluates macro and ticker-specific news equally)
+      for (const [eventId, inf] of Object.entries(cachedInfluences)) {
+        if (inf.status === "active") {
+          const elapsedMs = now - Number(inf.startTime || 0);
+          const durationMs = (Number(inf.durationMinutes) || 15) * 60 * 1000;
+          if (elapsedMs > durationMs) {
+            finishedEvents.add(eventId);
+            if (inf.impacts) {
+              for (const [t, pct] of Object.entries(inf.impacts)) {
+                if (cachedLivePrices[t]) {
+                  const targetImpactPct = pct / 100;
+                  cachedLivePrices[t].engineBasePrice = (cachedLivePrices[t].engineBasePrice || cachedLivePrices[t].price) * (1 + targetImpactPct);
+                }
+              }
+            }
+          }
+        }
       }
-      if (forceBasePriceReset) {
+
+      let shouldResetBase = false;
+      if (now - lastBasePriceReset >= 180000 || forceBasePriceReset) {
         shouldResetBase = true;
         forceBasePriceReset = false;
         lastBasePriceReset = now;
@@ -435,24 +401,18 @@ function startSimulationEngines() {
       for (const ticker of Object.keys(cachedLivePrices)) {
         const stockData = cachedLivePrices[ticker];
         let engineBase = stockData.engineBasePrice || stockData.basePrice || stockData.price;
-
-        if (shouldResetBase) {
-          engineBase = stockData.price;
-        }
+        if (shouldResetBase) engineBase = stockData.price;
 
         let eventBias = 0, currentTargetMultiplier = 1;
         for (const [eventId, inf] of Object.entries(cachedInfluences)) {
           if (inf.status === "active" && inf.impacts && inf.impacts[ticker] !== undefined) {
             const targetImpactPct = inf.impacts[ticker] / 100;
             const elapsedMs = now - inf.startTime;
-            const durationMs = inf.durationMinutes * 60 * 1000;
+            const durationMs = (inf.durationMinutes || 15) * 60 * 1000;
             if (elapsedMs > 0 && elapsedMs <= durationMs) {
               const progress = elapsedMs / durationMs;
               eventBias += (targetImpactPct / (durationMs / TICK_INTERVAL_MS)) * (Math.PI / 2) * Math.sin(progress * Math.PI);
               currentTargetMultiplier += (targetImpactPct * ((1 - Math.cos(progress * Math.PI)) / 2));
-            } else if (elapsedMs > durationMs) {
-              engineBase = engineBase * (1 + targetImpactPct);
-              finishedEvents.add(eventId);
             }
           }
         }
@@ -473,21 +433,27 @@ function startSimulationEngines() {
           timestamp: now
         };
 
+        // Bounded memory buffer (Keeps last 60 ticks per stock)
         if (!cachedPriceHistory[ticker]) cachedPriceHistory[ticker] = {};
-        if (tickCount % 6 === 0) cachedPriceHistory[ticker][now] = Number(newPrice.toFixed(2));
+        if (tickCount % 6 === 0) {
+          cachedPriceHistory[ticker][now] = Number(newPrice.toFixed(2));
+          const keys = Object.keys(cachedPriceHistory[ticker]);
+          if (keys.length > 60) delete cachedPriceHistory[ticker][keys[0]];
+        }
       }
 
+      // Mark expired news as completed
       for (const eventId of finishedEvents) {
         delete cachedInfluences[eventId];
-        await NewsEvent.updateOne({ eventId }, { status: "completed" });
+        const query = mongoose.isValidObjectId(eventId) ? { $or: [{ eventId }, { _id: eventId }] } : { eventId };
+        await NewsEvent.updateOne(query, { status: "completed" });
       }
 
-      // Live broadcast to all connected web clients
       io.emit("livePrices", { prices: cachedLivePrices, marketStatus: currentMarketStatus });
     } catch (e) {}
   }, TICK_INTERVAL_MS);
 
-  // Background Database Sync (Every 10 seconds)
+  // Background Database Sync (Every 15s)
   setInterval(async () => {
     try {
       await SystemState.updateOne(
@@ -495,15 +461,13 @@ function startSimulationEngines() {
         {
           marketStatus: currentMarketStatus,
           livePrices: cachedLivePrices,
-          priceHistory: cachedPriceHistory,
           marketInfluence: cachedInfluences,
           totalTaxCollected,
-          lastTradeTax,
-          rankings: cachedRankings
+          lastTradeTax
         }
       );
     } catch (e) {}
-  }, 10000);
+  }, 15000);
 }
 
 // --- AUTH & CONTEXT MIDDLEWARE ---
@@ -512,7 +476,7 @@ const authMiddleware = async (req, res, next) => {
   if (!token) return res.status(401).json({ error: { message: "Unauthenticated" } });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = await User.findOne({ uid: decoded.uid }).lean();
+    req.user = await User.findOne({ uid: decoded.uid }, "uid email role name isFrozen").lean();
     if (!req.user) return res.status(401).json({ error: { message: "User not found" } });
     next();
   } catch (err) {
@@ -538,28 +502,32 @@ const handleCallable = (handler) => async (req, res) => {
   }
 };
 
-// --- AUTH REST ENDPOINTS ---
+// --- AUTH & CLIENT ENDPOINTS ---
 app.post("/api/login", async (req, res) => {
-  const { email, password } = req.body.data || req.body;
-  const user = await User.findOne({ email });
-  if (!user || !(await bcrypt.compare(password, user.password))) {
-    return res.status(400).json({ error: { message: "Invalid email address or password." } });
-  }
-  const token = jwt.sign({ uid: user.uid, role: user.role }, JWT_SECRET, { expiresIn: "30d" });
-  res.json({
-    data: {
-      token,
-      user: {
-        uid: user.uid,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        cashBalance: user.cashBalance,
-        startingBalance: user.startingBalance,
-        isFrozen: user.isFrozen
-      }
+  try {
+    const { email, password } = req.body.data || req.body;
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(400).json({ error: { message: "Invalid email address or password." } });
     }
-  });
+    const token = jwt.sign({ uid: user.uid, role: user.role }, JWT_SECRET, { expiresIn: "30d" });
+    res.json({
+      data: {
+        token,
+        user: {
+          uid: user.uid,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          cashBalance: user.cashBalance,
+          startingBalance: user.startingBalance,
+          isFrozen: user.isFrozen
+        }
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: { message: e.message } });
+  }
 });
 
 app.post('/api/register', handleCallable(async (data) => {
@@ -575,40 +543,20 @@ app.post('/api/register', handleCallable(async (data) => {
   return { success: true };
 }));
 
-app.post('/api/resetPassword', handleCallable(async (data) => {
-  return { success: true, message: "Password reset instructions sent" };
-}));
-
-app.post('/api/updatePassword', authMiddleware, handleCallable(async (data, context) => {
-  const hashed = await bcrypt.hash(data.newPassword, 10);
-  await User.updateOne({ uid: context.auth.uid }, { password: hashed });
-  return { success: true };
-}));
-
-app.post('/api/updateUserProfile', authMiddleware, handleCallable(async (data, context) => {
-  await User.updateOne({ uid: context.auth.uid }, { $set: data.updates });
-  return { success: true };
-}));
-
 app.get("/api/me", authMiddleware, async (req, res) => {
   const u = await User.findOne({ uid: req.user.uid }).lean();
   res.json({ data: u });
 });
 
-app.get('/api/users/:uid', authMiddleware, async (req, res) => {
-  const u = await User.findOne({ uid: req.params.uid }).lean();
-  if (!u) return res.status(404).json({ error: { message: "User not found" } });
-  res.json({ data: u });
-});
-
-// --- CLIENT STATE ENDPOINTS ---
 app.get("/api/state", (req, res) => {
   res.json({
     data: {
       marketStatus: currentMarketStatus,
       livePrices: cachedLivePrices,
       priceHistory: cachedPriceHistory,
-      leaderboard: cachedRankings
+      leaderboard: cachedRankings,
+      totalTaxCollected,
+      lastTradeTax
     }
   });
 });
@@ -618,8 +566,7 @@ app.get("/api/leaderboard", (req, res) => {
 });
 
 app.get("/api/history/:ticker", authMiddleware, (req, res) => {
-  const ticker = req.params.ticker;
-  res.json({ data: cachedPriceHistory[ticker] || {} });
+  res.json({ data: cachedPriceHistory[req.params.ticker] || {} });
 });
 
 app.get("/api/orders", authMiddleware, async (req, res) => {
@@ -638,8 +585,8 @@ app.get("/api/news", authMiddleware, async (req, res) => {
 });
 
 app.get("/api/wishlists", authMiddleware, async (req, res) => {
-  const user = await User.findOne({ uid: req.user.uid }).lean();
-  res.json({ data: { wishlists: user.wishlists || [] } });
+  const user = await User.findOne({ uid: req.user.uid }, "wishlists").lean();
+  res.json({ data: { wishlists: user?.wishlists || [] } });
 });
 
 app.post("/api/wishlists/sync", authMiddleware, handleCallable(async (data, context) => {
@@ -648,23 +595,7 @@ app.post("/api/wishlists/sync", authMiddleware, handleCallable(async (data, cont
   return { success: true };
 }));
 
-// --- ADMIN READ ENDPOINTS ---
-app.get('/api/admin/users', authMiddleware, verifyAdmin, async (req, res) => {
-  const users = await User.find().lean();
-  res.json({ data: users });
-});
-
-app.get('/api/admin/orders', authMiddleware, verifyAdmin, async (req, res) => {
-  const orders = await Order.find().sort({ timestamp: -1 }).limit(50).lean();
-  res.json({ data: orders });
-});
-
-app.get("/api/adminLogs", authMiddleware, verifyAdmin, async (req, res) => {
-  const logs = await AdminLog.find().sort({ timestamp: -1 }).limit(100).lean();
-  res.json({ data: logs });
-});
-
-// --- CORE TRADING ENGINE ---
+// --- CORE TRADING ENGINE (Zero Fake Cash Injection) ---
 app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, context) => {
   if (!context.auth) throw new Error("User not logged in");
   const uid = context.auth.uid;
@@ -678,6 +609,7 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
   const execPrice = priceData.price;
 
   const user = await User.findOne({ uid });
+  if (!user) throw new Error("User not found");
   if (user.isFrozen) throw new Error("Account is frozen");
 
   let cashBalance = user.cashBalance;
@@ -717,10 +649,8 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
       const grossProceeds = qty * execPrice;
       taxDeducted = Math.round(grossProceeds * 0.001 * 100) / 100;
       const netProceeds = grossProceeds - taxDeducted;
-
       const buyPrice = longData.avgPrice || execPrice;
-      const grossPnL = (execPrice - buyPrice) * qty;
-      realizedPnL = Math.round((grossPnL - taxDeducted) * 100) / 100;
+      realizedPnL = Math.round(((execPrice - buyPrice) * qty - taxDeducted) * 100) / 100;
       pnlPct = buyPrice > 0 ? Number((((execPrice - buyPrice) / buyPrice) * 100).toFixed(2)) : 0;
 
       cashBalance += netProceeds;
@@ -733,13 +663,14 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
       orderStatus = "completed";
     }
   } else if (action === "SHORT") {
+    // Requires 100% Margin Collateral. Cash is NOT increased; only 0.1% STT is deducted.
     const marginRequired = qty * execPrice;
     taxDeducted = Math.round(marginRequired * 0.001 * 100) / 100;
-    if (cashBalance < marginRequired) {
+    if (cashBalance < marginRequired + taxDeducted) {
       orderStatus = "rejected";
-      rejectReason = "Insufficient margin";
+      rejectReason = "Insufficient cash balance for margin requirement";
     } else {
-      cashBalance += (marginRequired - taxDeducted);
+      cashBalance -= taxDeducted;
       const existingIdx = user.holdings.findIndex(h => h.ticker === ticker && h.positionType === "short");
       const newQty = shortData.quantity + qty;
       const newAvg = ((shortData.quantity * shortData.avgPrice) + marginRequired) / newQty;
@@ -758,18 +689,16 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
     } else {
       const coverCost = qty * execPrice;
       taxDeducted = Math.round(coverCost * 0.001 * 100) / 100;
-      const totalDebit = coverCost + taxDeducted;
-
       const shortPrice = shortData.avgPrice || execPrice;
-      const grossPnL = (shortPrice - execPrice) * qty;
-      realizedPnL = Math.round((grossPnL - taxDeducted) * 100) / 100;
+
+      realizedPnL = Math.round(((shortPrice - execPrice) * qty - taxDeducted) * 100) / 100;
       pnlPct = shortPrice > 0 ? Number((((shortPrice - execPrice) / shortPrice) * 100).toFixed(2)) : 0;
 
-      if (cashBalance < totalDebit) {
+      if (cashBalance + realizedPnL < 0) {
         orderStatus = "rejected";
-        rejectReason = "Insufficient cash to cover (including 0.1% STT)";
+        rejectReason = "Insufficient cash to absorb short trade loss";
       } else {
-        cashBalance -= totalDebit;
+        cashBalance += realizedPnL;
         if (shortData.quantity - qty === 0) {
           user.holdings = user.holdings.filter(h => !(h.ticker === ticker && h.positionType === "short"));
         } else {
@@ -781,44 +710,25 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
     }
   }
 
-  const latencyMs = 1;
-
   if (orderStatus === "completed") {
     totalTaxCollected += taxDeducted;
     lastTradeTax = taxDeducted;
-    user.cashBalance = cashBalance;
+    user.cashBalance = Math.max(0, cashBalance);
     await user.save();
     io.emit(`userUpdate:${uid}`, { cashBalance: user.cashBalance, holdings: user.holdings });
   }
 
-  const orderDoc = await Order.create({
+  await Order.create({
     orderId: "ord_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
-    uid,
-    ticker,
-    side: action,
-    quantity: qty,
-    priceAtExecution: execPrice,
-    timestamp: Date.now(),
-    status: orderStatus,
-    reason: rejectReason,
-    executionLatencyMs: latencyMs,
-    realizedPnL,
-    pnlPct,
-    taxDeducted
+    uid, ticker, side: action, quantity: qty,
+    priceAtExecution: execPrice, status: orderStatus, reason: rejectReason,
+    realizedPnL, pnlPct, taxDeducted
   });
 
-  return {
-    status: orderStatus,
-    reason: rejectReason,
-    executionPrice: execPrice,
-    latencyMs,
-    realizedPnL,
-    pnlPct,
-    taxDeducted
-  };
+  return { status: orderStatus, reason: rejectReason, executionPrice: execPrice, realizedPnL, pnlPct, taxDeducted };
 }));
 
-// --- IPO BIDDING & ALLOTMENT ---
+// --- IPO BIDDING ---
 app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, context) => {
   if (!context.auth) throw new Error("User not logged in");
   const uid = context.auth.uid;
@@ -826,8 +736,7 @@ app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, contex
   if (isNaN(qty) || qty <= 0) throw new Error("Quantity must be positive");
 
   const ipo = await IPO.findOne({ ipoId: data.ipoId });
-  if (!ipo) throw new Error("IPO not found");
-  if (ipo.status !== "open") throw new Error(`IPO is currently ${ipo.status}. Bids are only accepted while open.`);
+  if (!ipo || ipo.status !== "open") throw new Error("IPO is not open for bidding");
 
   const cost = qty * Number(ipo.price);
   const user = await User.findOne({ uid });
@@ -842,86 +751,44 @@ app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, contex
     existingSub.requestedShares += qty;
     existingSub.requestedLots = (existingSub.requestedLots || 0) + lotsToAdd;
     existingSub.investedAmount = (existingSub.investedAmount || 0) + cost;
-    existingSub.timestamp = Date.now();
   } else {
     ipo.subscriptions.push({
       subId: "sub_" + Date.now(),
-      uid,
-      requestedShares: qty,
-      requestedLots: lotsToAdd,
-      allocatedShares: 0,
-      allocatedLots: 0,
-      investedAmount: cost,
-      timestamp: Date.now(),
-      status: "pending"
+      uid, requestedShares: qty, requestedLots: lotsToAdd,
+      allocatedShares: 0, allocatedLots: 0, investedAmount: cost
     });
   }
 
-  const currentSubLots = Number(ipo.totalSubscribedLots) || 0;
-  const currentSubShares = Number(ipo.totalSubscribedShares) || 0;
-  const currentSubCount = Number(ipo.subscriptionCount) || 0;
-
-  ipo.totalSubscribedLots = currentSubLots + lotsToAdd;
-  ipo.totalSubscribedShares = currentSubShares + qty;
-  ipo.subscriptionCount = existingSub ? currentSubCount : (currentSubCount + 1);
+  ipo.totalSubscribedLots = (ipo.totalSubscribedLots || 0) + lotsToAdd;
+  ipo.totalSubscribedShares = (ipo.totalSubscribedShares || 0) + qty;
+  ipo.subscriptionCount = ipo.subscriptions.length;
   ipo.subscriptionRate = Number((ipo.totalSubscribedLots / (Number(ipo.totalLots) || 1)).toFixed(2));
   await ipo.save();
 
   io.emit(`userUpdate:${uid}`, { cashBalance: user.cashBalance });
-  return {
-    success: true,
-    totalSubscribedLots: ipo.totalSubscribedLots,
-    subscriptionRate: ipo.subscriptionRate
-  };
-}));
-
-app.post('/api/processAllotment', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  await IPO.updateOne({ ipoId: data.ipoId }, { triggerAllotment: true });
-  return { success: true };
-}));
-
-app.post('/api/listIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  await IPO.updateOne({ ipoId: data.ipoId }, { triggerListing: true });
   return { success: true };
 }));
 
 // --- ADMIN SYSTEM & MATRIX CONTROLLERS ---
+app.get('/api/admin/users', authMiddleware, verifyAdmin, async (req, res) => {
+  const users = await User.find().lean();
+  res.json({ data: users });
+});
+
+app.get('/api/admin/orders', authMiddleware, verifyAdmin, async (req, res) => {
+  const orders = await Order.find().sort({ timestamp: -1 }).limit(50).lean();
+  res.json({ data: orders });
+});
+
+app.get("/api/adminLogs", authMiddleware, verifyAdmin, async (req, res) => {
+  const logs = await AdminLog.find().sort({ timestamp: -1 }).limit(100).lean();
+  res.json({ data: logs });
+});
+
 app.post('/api/adminAdjustCash', authMiddleware, verifyAdmin, handleCallable(async (data) => {
   await User.updateOne({ uid: data.uid }, { cashBalance: data.amount });
   io.emit(`userUpdate:${data.uid}`, { cashBalance: data.amount });
   return { success: true };
-}));
-
-app.post('/api/adminSendPasswordResets', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  return { success: true };
-}));
-
-app.post('/api/adminCreateIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  await IPO.create({
-    ipoId: "ipo_" + Date.now(),
-    name: data.name,
-    ticker: data.ticker,
-    price: data.price,
-    lotSize: data.lotSize,
-    totalLots: data.totalLots,
-    listingPremiumPct: data.listingPremiumPct,
-    status: "upcoming",
-    openTime: data.openTime,
-    closeTime: data.closeTime,
-    listTime: data.listTime
-  });
-  return { success: true };
-}));
-
-app.post('/api/adminCloseIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  await IPO.updateOne({ ipoId: data.ipoId }, { status: "closed" });
-  return { success: true };
-}));
-
-app.post('/api/adminUpdateIPOGMP', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  const newGmp = Number(data.listingPremiumPct) || 0;
-  await IPO.updateOne({ ipoId: data.ipoId }, { listingPremiumPct: newGmp });
-  return { success: true, listingPremiumPct: newGmp };
 }));
 
 app.post('/api/adminSetMarketStatus', authMiddleware, verifyAdmin, handleCallable(async (data) => {
@@ -931,9 +798,16 @@ app.post('/api/adminSetMarketStatus', authMiddleware, verifyAdmin, handleCallabl
 }));
 
 app.post('/api/adminForceStockPrice', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  if (cachedLivePrices[data.ticker]) {
-    cachedLivePrices[data.ticker].price = Number(data.price);
-    cachedLivePrices[data.ticker].timestamp = Date.now();
+  const ticker = data.ticker?.toUpperCase();
+  const targetPrice = Number(data.price);
+  if (cachedLivePrices[ticker] && !isNaN(targetPrice)) {
+    cachedLivePrices[ticker].price = targetPrice;
+    cachedLivePrices[ticker].engineBasePrice = targetPrice;
+    cachedLivePrices[ticker].basePrice = targetPrice;
+    cachedLivePrices[ticker].high = Math.max(cachedLivePrices[ticker].high || targetPrice, targetPrice);
+    cachedLivePrices[ticker].low = Math.min(cachedLivePrices[ticker].low || targetPrice, targetPrice);
+    cachedLivePrices[ticker].timestamp = Date.now();
+    io.emit("livePrices", { prices: cachedLivePrices, marketStatus: currentMarketStatus });
   }
   return { success: true };
 }));
@@ -996,52 +870,85 @@ app.post('/api/adminImportUsers', authMiddleware, verifyAdmin, handleCallable(as
   return { success: true };
 }));
 
-app.post('/api/adminImportNews', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  const events = data.events || [];
-  for (const ev of events) {
-    const evtId = "news_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
-    await NewsEvent.create({
-      eventId: evtId,
-      headline: ev.headline,
-      stockImpacts: ev.stockImpacts || {},
-      durationMinutes: Number(ev.durationMinutes) || 15,
-      status: "draft",
-      startTime: 0,
-      createdAt: Date.now()
-    });
-  }
-  return { success: true, count: events.length };
+app.post('/api/adminCreateIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  await IPO.create({
+    ipoId: "ipo_" + Date.now(),
+    name: data.name,
+    ticker: data.ticker,
+    price: data.price,
+    lotSize: data.lotSize,
+    totalLots: data.totalLots,
+    listingPremiumPct: data.listingPremiumPct,
+    status: "upcoming",
+    openTime: data.openTime,
+    closeTime: data.closeTime,
+    listTime: data.listTime
+  });
+  return { success: true };
 }));
 
-app.post('/api/adminReleaseNewsEvent', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+app.post('/api/adminCloseIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const query = mongoose.isValidObjectId(data.ipoId) 
+    ? { $or: [{ ipoId: data.ipoId }, { _id: data.ipoId }] }
+    : { ipoId: data.ipoId };
+  await IPO.updateOne(query, { status: "closed" });
+  return { success: true };
+}));
+
+app.post('/api/adminUpdateIPOGMP', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const newGmp = Number(data.listingPremiumPct) || 0;
+  await IPO.updateOne({ ipoId: data.ipoId }, { listingPremiumPct: newGmp });
+  return { success: true };
+}));
+
+app.post('/api/processAllotment', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const query = mongoose.isValidObjectId(data.ipoId) 
+    ? { $or: [{ ipoId: data.ipoId }, { _id: data.ipoId }] }
+    : { ipoId: data.ipoId };
+  await IPO.updateOne(query, { triggerAllotment: true });
+  return { success: true };
+}));
+
+app.post('/api/listIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const query = mongoose.isValidObjectId(data.ipoId) 
+    ? { $or: [{ ipoId: data.ipoId }, { _id: data.ipoId }] }
+    : { ipoId: data.ipoId };
+
+  const ipo = await IPO.findOne(query);
+  if (!ipo) throw new Error("IPO not found");
+
   const now = Date.now();
-  await NewsEvent.updateOne(
-    { eventId: data.eventId },
-    { status: "active", startTime: now, firedAt: now, durationMinutes: data.durationMinutes || 15 }
-  );
-  cachedInfluences[data.eventId] = {
-    id: data.eventId,
-    headline: data.adminData?.headline || "Breaking Market News",
-    impacts: data.adminData?.stockImpacts || {},
-    durationMinutes: data.durationMinutes || 15,
-    startTime: now,
-    status: "active"
+  const listingPrice = Number(ipo.price) * (1 + ((Number(ipo.listingPremiumPct) || 0) / 100));
+  ipo.status = "listed";
+  ipo.triggerListing = false;
+  await ipo.save();
+
+  cachedLivePrices[ipo.ticker] = {
+    ticker: ipo.ticker,
+    name: ipo.name || ipo.ticker,
+    sector: ipo.sector || "IPO",
+    price: Number(listingPrice.toFixed(2)),
+    basePrice: Number(listingPrice.toFixed(2)),
+    volatility: 0.008,
+    isIPO: true,
+    timestamp: now
   };
-  forceBasePriceReset = true;
-  io.emit("newsUpdate", { type: "breaking", headline: data.adminData?.headline });
-  return { success: true };
-}));
 
-app.post('/api/adminPauseNews', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  await NewsEvent.updateOne({ eventId: data.eventId }, { status: "paused" });
-  if (cachedInfluences[data.eventId]) cachedInfluences[data.eventId].status = "paused";
-  return { success: true };
-}));
+  await NewsEvent.create({
+    eventId: "news_" + Date.now(),
+    headline: `🚀 IPO Listed: ${ipo.ticker} (${ipo.name || ipo.ticker}) listed at ₹${listingPrice.toFixed(2)} and is now LIVE for trading!`,
+    status: "active",
+    startTime: now,
+    createdAt: now,
+    durationMinutes: 60,
+    targetTickers: [ipo.ticker],
+    impactDirection: "positive"
+  });
 
-app.post('/api/adminCancelNewsEvent', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  await NewsEvent.updateOne({ eventId: data.eventId }, { status: "cancelled" });
-  delete cachedInfluences[data.eventId];
-  return { success: true };
+  io.emit("newsUpdate", { type: "listed", ipo: ipo.ticker });
+  io.emit("livePrices", { prices: cachedLivePrices, marketStatus: currentMarketStatus });
+
+  return { success: true, ticker: ipo.ticker, price: listingPrice };
 }));
 
 app.post('/api/adminCreateNewsEvent', authMiddleware, verifyAdmin, handleCallable(async (data) => {
@@ -1053,61 +960,92 @@ app.post('/api/adminCreateNewsEvent', authMiddleware, verifyAdmin, handleCallabl
     stockImpacts: data.stockImpacts || {},
     durationMinutes: Number(data.durationMinutes) || 15,
     status: "draft",
-    startTime: 0,
     createdAt: Date.now()
   });
   return { success: true, eventId: evtId };
 }));
 
+app.post('/api/adminReleaseNewsEvent', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const targetId = data.eventId || data.event?.id || data.event?.eventId;
+  const now = Date.now();
+  const query = mongoose.isValidObjectId(targetId) ? { $or: [{ eventId: targetId }, { _id: targetId }] } : { eventId: targetId };
+
+  await NewsEvent.updateOne(
+    query,
+    { status: "active", startTime: now, firedAt: now, durationMinutes: data.durationMinutes || 15 }
+  );
+  cachedInfluences[targetId] = {
+    id: targetId,
+    headline: data.event?.headline || "Breaking Market News",
+    impacts: data.event?.stockImpacts || {},
+    durationMinutes: data.durationMinutes || 15,
+    startTime: now,
+    status: "active"
+  };
+  forceBasePriceReset = true;
+  io.emit("newsUpdate", { type: "breaking", headline: data.event?.headline });
+  return { success: true };
+}));
+
+app.post('/api/adminCancelNewsEvent', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const targetId = data.eventId;
+  const query = mongoose.isValidObjectId(targetId) ? { $or: [{ eventId: targetId }, { _id: targetId }] } : { eventId: targetId };
+  await NewsEvent.updateOne(query, { status: "cancelled" });
+  delete cachedInfluences[targetId];
+  return { success: true };
+}));
+
 app.post('/api/adminDeleteSingleNews', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  if (!data.eventId) throw new Error("eventId is required.");
-  await NewsEvent.deleteOne({ eventId: data.eventId });
-  delete cachedInfluences[data.eventId];
+  const targetId = data.eventId;
+  const query = mongoose.isValidObjectId(targetId) ? { $or: [{ eventId: targetId }, { _id: targetId }] } : { eventId: targetId };
+  await NewsEvent.deleteOne(query);
+  delete cachedInfluences[targetId];
+  forceBasePriceReset = true;
+  return { success: true };
+}));
+
+app.post('/api/adminDeleteAllNews', authMiddleware, verifyAdmin, handleCallable(async () => {
+  await NewsEvent.deleteMany({});
+  cachedInfluences = {};
   forceBasePriceReset = true;
   return { success: true };
 }));
 
 app.post('/api/adminTriggerNextNews', authMiddleware, verifyAdmin, handleCallable(async () => {
   const event = await NewsEvent.findOne({ status: "draft" }).sort({ createdAt: 1 });
-  if (!event) throw new Error("No draft news events in queue to trigger.");
-
+  if (!event) throw new Error("No draft news in queue.");
   const now = Date.now();
-  const duration = event.durationMinutes || 15;
   event.status = "active";
   event.startTime = now;
   event.firedAt = now;
   await event.save();
-
   cachedInfluences[event.eventId] = {
     id: event.eventId,
-    headline: event.headline || "Breaking Market News",
+    headline: event.headline,
     impacts: event.stockImpacts || {},
-    durationMinutes: duration,
+    durationMinutes: event.durationMinutes || 15,
     startTime: now,
     status: "active"
   };
   forceBasePriceReset = true;
   io.emit("newsUpdate", { type: "breaking", headline: event.headline });
-  return { success: true, eventId: event.eventId, headline: event.headline };
+  return { success: true, headline: event.headline };
 }));
 
 app.post('/api/adminTriggerAllNews', authMiddleware, verifyAdmin, handleCallable(async () => {
   const drafts = await NewsEvent.find({ status: "draft" });
-  if (drafts.length === 0) throw new Error("No draft news events in queue to trigger.");
-
+  if (drafts.length === 0) throw new Error("No draft news in queue.");
   const now = Date.now();
   for (const event of drafts) {
-    const duration = event.durationMinutes || 15;
     event.status = "active";
     event.startTime = now;
     event.firedAt = now;
     await event.save();
-
     cachedInfluences[event.eventId] = {
       id: event.eventId,
-      headline: event.headline || "Breaking Market News",
+      headline: event.headline,
       impacts: event.stockImpacts || {},
-      durationMinutes: duration,
+      durationMinutes: event.durationMinutes || 15,
       startTime: now,
       status: "active"
     };
@@ -1115,14 +1053,6 @@ app.post('/api/adminTriggerAllNews', authMiddleware, verifyAdmin, handleCallable
   forceBasePriceReset = true;
   io.emit("newsUpdate", { type: "bulk_breaking", count: drafts.length });
   return { success: true, count: drafts.length };
-}));
-
-app.post('/api/adminDeleteAllNews', authMiddleware, verifyAdmin, handleCallable(async () => {
-  const count = await NewsEvent.countDocuments();
-  await NewsEvent.deleteMany({});
-  cachedInfluences = {};
-  forceBasePriceReset = true;
-  return { success: true, deletedCount: count };
 }));
 
 app.post('/api/adminResetSystem', authMiddleware, verifyAdmin, handleCallable(async () => {
@@ -1140,7 +1070,6 @@ app.post('/api/adminResetSystem', authMiddleware, verifyAdmin, handleCallable(as
   return { success: true };
 }));
 
-// System Audit Logger helper
 app.post('/api/logAdminAction', authMiddleware, verifyAdmin, async (req, res) => {
   const { action, details } = req.body.data || req.body;
   await AdminLog.create({
@@ -1151,6 +1080,10 @@ app.post('/api/logAdminAction', authMiddleware, verifyAdmin, async (req, res) =>
   });
   res.json({ data: { success: true } });
 });
+
+// Crash Prevention Hooks
+process.on("uncaughtException", (err) => console.error("Uncaught Exception:", err.message));
+process.on("unhandledRejection", (reason) => console.error("Unhandled Rejection:", reason));
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(` MarketSim Native MongoDB + Socket.io Server running on port ${PORT}`);

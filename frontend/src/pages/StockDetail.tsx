@@ -1,21 +1,46 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useLivePrices } from "../hooks/useLivePrices";
 import { useUserTradingData } from "../hooks/useUserTradingData";
 import { STOCKS_CATALOG } from "../data/stocksData";
 import CustomCandleChart from "../components/CustomCandleChart";
 import { executeTrade } from "../services/tradeService";
-import { ArrowLeft, TrendingUp, TrendingDown, CheckCircle2, AlertCircle, Zap } from "lucide-react";
+import { 
+  ArrowLeft, TrendingUp, TrendingDown, CheckCircle2, 
+  AlertCircle, Zap, Shield, ZoomIn, ZoomOut, RefreshCw 
+} from "lucide-react";
 import AddToWishlistButton from "../components/AddToWishlistButton";
+import { API_URL } from "../config/api";
+
 export default function StockDetail() {
   const { ticker } = useParams<{ ticker: string }>();
   const { prices } = useLivePrices();
-  const { cashBalance, longHoldings } = useUserTradingData();
+  const tradingData = useUserTradingData() as any;
+  const cashBalance = Number(tradingData?.cashBalance ?? 0);
   
+  // Normalize long and short holdings from context
+  const holdings: any[] = tradingData?.holdings || [
+    ...(tradingData?.longHoldings || []),
+    ...(tradingData?.shortHoldings || [])
+  ];
+
   const [side, setSide] = useState<"BUY" | "SELL" | "SHORT" | "COVER">("BUY");
   const [quantity, setQuantity] = useState<string>("1");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ status: string; reason?: string; latencyMs?: number; roundtripMs?: number; taxDeducted?: number; realizedPnL?: number } | null>(null);
+  const [result, setResult] = useState<{ 
+    status: string; 
+    reason?: string; 
+    latencyMs?: number; 
+    taxDeducted?: number; 
+    realizedPnL?: number;
+    pnlPct?: number;
+  } | null>(null);
+
+  // Dynamic Chart History & Zoom State
+  const [historyLimit, setHistoryLimit] = useState<number>(120); // Default 120 candles (2 hours)
+  const [chartHistory, setChartHistory] = useState<Record<string, number>>({});
+  const [isFetchingHistory, setIsFetchingHistory] = useState<boolean>(false);
+  const [timeframe, setTimeframe] = useState<"1m" | "5m" | "15m">("1m");
 
   const dbData = prices[ticker || ""] as any;
   const catalogData = STOCKS_CATALOG.find((s) => s.ticker === ticker);
@@ -32,17 +57,57 @@ export default function StockDetail() {
   const changePct = stockMeta.basePrice > 0 ? (change / stockMeta.basePrice) * 100 : 0;
   const isUp = change >= 0;
 
-  // Highest & Lowest value of the stock
   const highestValue = Number(dbData?.high || Math.max(livePrice, stockMeta.basePrice * 1.06));
   const lowestValue = Number(dbData?.low || Math.min(livePrice, stockMeta.basePrice * 0.94));
 
-  const longPosition = longHoldings.find((h) => h.ticker === stockMeta.ticker);
+  // Active Long & Short Positions for this stock
+  const longPosition = holdings.find((h) => h.ticker === stockMeta.ticker && h.positionType === "long");
+  const shortPosition = holdings.find((h) => h.ticker === stockMeta.ticker && h.positionType === "short");
 
   const numQty = Math.max(0, parseInt(quantity, 10) || 0);
   const estimatedTotal = numQty * livePrice;
-  const estimatedTax = estimatedTotal * 0.001;
+  const estimatedTax = estimatedTotal * 0.001; // 0.1% STT
   const netProceeds = (side === "SELL" || side === "SHORT") ? estimatedTotal - estimatedTax : estimatedTotal + estimatedTax;
 
+  // Max quantities affordable with available cash
+  const maxBuyQty = livePrice > 0 ? Math.floor(cashBalance / (livePrice * 1.001)) : 0;
+  const maxShortQty = livePrice > 0 ? Math.floor(cashBalance / (livePrice * 1.001)) : 0;
+
+  // Fetch expanded historical price data when zooming out or scrolling back
+  const fetchHistoricalData = useCallback(async (limit: number) => {
+    try {
+      setIsFetchingHistory(true);
+      const token = localStorage.getItem("bazaar_jwt_token");
+      const res = await fetch(`${API_URL}/history/${stockMeta.ticker}?limit=${limit}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data) {
+          setChartHistory(json.data);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load historical data", e);
+    } finally {
+      setIsFetchingHistory(false);
+    }
+  }, [stockMeta.ticker]);
+
+  useEffect(() => {
+    fetchHistoricalData(historyLimit);
+  }, [fetchHistoricalData, historyLimit]);
+
+  // Zoom handlers: load more past data when zoomed out
+  const handleZoomOut = () => {
+    setHistoryLimit((prev) => Math.min(prev + 120, 1440)); // Extends up to 24 hours of data
+  };
+
+  const handleZoomIn = () => {
+    setHistoryLimit((prev) => Math.max(prev - 60, 60)); // Min 60 candles
+  };
+
+  // Trade Executor
   const handleAction = async () => {
     if (numQty <= 0) return;
     setLoading(true);
@@ -58,16 +123,16 @@ export default function StockDetail() {
       setResult({ status: "rejected", reason: err.message || "Execution rejected by market engine" });
     } finally {
       setLoading(false);
-      setTimeout(() => setResult(null), 5000);
+      setTimeout(() => setResult(null), 6000);
     }
   };
 
-  // Sell all bought shares of this specific stock at once
-  const handleSellAllSpecificStock = async () => {
+  // Instant Sell All Long Shares
+  const handleSellAllLongs = async () => {
     if (!longPosition || longPosition.quantity <= 0) return;
-    setSide("SELL");
-    setQuantity(String(longPosition.quantity));
     const qtyToSell = longPosition.quantity;
+    setSide("SELL");
+    setQuantity(String(qtyToSell));
     setLoading(true);
     setResult(null);
 
@@ -79,13 +144,34 @@ export default function StockDetail() {
       setResult({ status: "rejected", reason: err.message || "Execution error" });
     } finally {
       setLoading(false);
-      setTimeout(() => setResult(null), 5000);
+      setTimeout(() => setResult(null), 6000);
+    }
+  };
+
+  // Instant Cover All Shorted Shares
+  const handleCoverAllShorts = async () => {
+    if (!shortPosition || shortPosition.quantity <= 0) return;
+    const qtyToCover = shortPosition.quantity;
+    setSide("COVER");
+    setQuantity(String(qtyToCover));
+    setLoading(true);
+    setResult(null);
+
+    try {
+      const res: any = await executeTrade(stockMeta.ticker, "COVER", qtyToCover);
+      setResult(res);
+      setQuantity("1");
+    } catch (err: any) {
+      setResult({ status: "rejected", reason: err.message || "Execution error" });
+    } finally {
+      setLoading(false);
+      setTimeout(() => setResult(null), 6000);
     }
   };
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Top Breadcrumb & Status */}
+      {/* Top Breadcrumb */}
       <div className="flex items-center justify-between">
         <Link
           to="/stocks"
@@ -96,7 +182,7 @@ export default function StockDetail() {
         </Link>
       </div>
 
-      {/* Main Stock Banner with Highest Value */}
+      {/* Main Stock Banner */}
       <div className="terminal-card p-4 md:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3 flex-wrap">
@@ -110,7 +196,6 @@ export default function StockDetail() {
         </div>
 
         <div className="flex items-center gap-6">
-          {/* Highest Value of the Stock Display */}
           <div className="text-left md:text-right border-l-2 md:border-l-0 md:border-r border-[var(--border-subtle)] pl-3 md:pl-0 md:pr-6">
             <span className="text-[10px] font-mono uppercase text-amber-400 font-bold block">
               Highest Value (ATH)
@@ -144,17 +229,71 @@ export default function StockDetail() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6 items-start">
-        {/* Left 2 Cols: Chart & Metrics */}
+        {/* Left 2 Cols: Chart with Zoom Toolbar & Historical Range Fetching */}
         <div className="lg:col-span-2 w-full flex flex-col gap-4">
-          <div className="terminal-card p-1 flex flex-col h-[460px] w-full overflow-hidden">
-            <CustomCandleChart
-              ticker={stockMeta.ticker}
-              basePrice={stockMeta.basePrice}
-              currentPrice={livePrice}
-            />
+          <div className="terminal-card p-2 flex flex-col h-[490px] w-full overflow-hidden">
+            {/* Interactive Chart Toolbar */}
+            <div className="flex items-center justify-between pb-2 mb-1 border-b border-[var(--border-subtle)] px-2 text-xs font-mono">
+              <div className="flex items-center gap-1.5">
+                {(["1m", "5m", "15m"] as const).map((tf) => (
+                  <button
+                    key={tf}
+                    type="button"
+                    onClick={() => setTimeframe(tf)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase transition-colors ${
+                      timeframe === tf
+                        ? "bg-[#3b82f6] text-white"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-main)] bg-[var(--bg-root)] border border-[var(--border-subtle)]"
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+                {isFetchingHistory && (
+                  <span className="flex items-center gap-1 text-[10px] text-amber-400 animate-pulse ml-2">
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Loading past candles...
+                  </span>
+                )}
+              </div>
+
+              {/* Zoom In/Out & Depth Control */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-[var(--text-muted)] hidden sm:inline">
+                  History: {historyLimit} candles
+                </span>
+                <button
+                  type="button"
+                  onClick={handleZoomIn}
+                  className="p-1 rounded bg-[var(--bg-root)] border border-[var(--border-subtle)] hover:bg-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                  title="Zoom In"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleZoomOut}
+                  className="p-1 rounded bg-[var(--bg-root)] border border-[var(--border-subtle)] hover:bg-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                  title="Zoom Out / Load More Past History"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Candle Chart Render */}
+            <div className="flex-1 w-full h-full overflow-hidden">
+              <CustomCandleChart
+                ticker={stockMeta.ticker}
+                basePrice={stockMeta.basePrice}
+                currentPrice={livePrice}
+                historyData={chartHistory}
+                timeframe={timeframe}
+                onScrollBack={handleZoomOut}
+              />
+            </div>
           </div>
 
-          {/* Key Stock Metrics Bar with Highest Value */}
+          {/* Key Stock Metrics Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
             <div className="p-3 bg-[var(--bg-card)] rounded border border-[var(--border-subtle)]">
               <span className="text-[var(--text-muted)] block text-[9px] uppercase">Base Price</span>
@@ -169,13 +308,13 @@ export default function StockDetail() {
               <span className="text-[var(--text-muted)] font-bold">₹{lowestValue.toFixed(2)}</span>
             </div>
             <div className="p-3 bg-[var(--bg-card)] rounded border border-[var(--border-subtle)]">
-              <span className="text-[var(--text-muted)] block text-[9px] uppercase">Transaction Tax</span>
+              <span className="text-[var(--text-muted)] block text-[9px] uppercase">Securities Tax</span>
               <span className="text-[var(--up-color)] font-bold">0.1% STT</span>
             </div>
           </div>
         </div>
 
-        {/* Right Col: Order Pad (Current Positions completely removed) */}
+        {/* Right Col: Order Entry Pad & One-Click Position Handlers */}
         <div className="w-full flex flex-col gap-4">
           <div className="terminal-card p-4">
             <h3 className="text-xs font-bold text-[var(--text-main)] border-b border-[var(--border-subtle)] pb-2 mb-3">
@@ -183,7 +322,7 @@ export default function StockDetail() {
             </h3>
             
             {/* Side Tabs */}
-            <div className="flex bg-[var(--bg-root)] p-1 border border-[var(--border-subtle)] rounded mb-4">
+            <div className="flex bg-[var(--bg-root)] p-1 border border-[var(--border-subtle)] rounded mb-3">
               {(["BUY", "SELL", "SHORT", "COVER"] as const).map((t) => (
                 <button
                   key={t}
@@ -202,31 +341,50 @@ export default function StockDetail() {
               ))}
             </div>
 
-            {/* Quick 1-Click "Sell All Specific Stock" Button */}
+            {/* Quick 1-Click "Instant Sell All Longs" Banner */}
             {longPosition && longPosition.quantity > 0 && (
-              <div className="mb-4 p-2.5 bg-amber-500/10 border border-amber-500/30 rounded flex flex-col gap-1.5">
+              <div className="mb-3 p-2.5 bg-rose-500/10 border border-rose-500/30 rounded flex flex-col gap-1.5">
                 <div className="flex justify-between items-center text-[11px] font-mono">
-                  <span className="text-[var(--text-muted)]">You Own:</span>
-                  <span className="font-bold text-[var(--text-main)]">{longPosition.quantity} Shares</span>
+                  <span className="text-[var(--text-muted)]">Long Holding:</span>
+                  <span className="font-bold text-[var(--text-main)]">{longPosition.quantity} Shares (Avg ₹{Number(longPosition.avgPrice).toFixed(2)})</span>
                 </div>
                 <button
                   type="button"
-                  onClick={handleSellAllSpecificStock}
+                  onClick={handleSellAllLongs}
                   disabled={loading}
-                  className="w-full py-2 bg-[var(--down-color)] text-white text-[11px] font-bold font-mono uppercase tracking-wider rounded hover:opacity-90 transition-opacity shadow-sm flex items-center justify-center gap-1.5"
+                  className="w-full py-2 bg-[var(--down-color)] text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded hover:opacity-90 transition-opacity shadow-sm flex items-center justify-center gap-1.5"
                 >
-                  <Zap className="w-3.5 h-3.5 fill-current" />
-                  <span>Sell All {longPosition.quantity} {stockMeta.ticker} Shares At Once</span>
+                  <Zap className="w-3 h-3 fill-current" />
+                  <span>Instant Sell All {longPosition.quantity} Long Shares</span>
+                </button>
+              </div>
+            )}
+
+            {/* Quick 1-Click "Instant Cover All Shorts" Banner */}
+            {shortPosition && shortPosition.quantity > 0 && (
+              <div className="mb-3 p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded flex flex-col gap-1.5">
+                <div className="flex justify-between items-center text-[11px] font-mono">
+                  <span className="text-[var(--text-muted)]">Short Position:</span>
+                  <span className="font-bold text-[var(--text-main)]">{shortPosition.quantity} Shares (Avg ₹{Number(shortPosition.avgPrice).toFixed(2)})</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCoverAllShorts}
+                  disabled={loading}
+                  className="w-full py-2 bg-[var(--up-color)] text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded hover:opacity-90 transition-opacity shadow-sm flex items-center justify-center gap-1.5"
+                >
+                  <Shield className="w-3 h-3" />
+                  <span>Instant Cover All {shortPosition.quantity} Shorted Shares</span>
                 </button>
               </div>
             )}
 
             <div className="space-y-4">
-              {/* Quantity Input with Chips */}
+              {/* Quantity Input with Symmetrical Max Long & Max Short Chips */}
               <div>
                 <div className="flex justify-between items-center text-xs text-[var(--text-muted)] font-mono mb-1">
                   <span>Order Quantity</span>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 flex-wrap">
                     {[1, 10, 50, 100].map((q) => (
                       <button
                         key={q}
@@ -237,21 +395,35 @@ export default function StockDetail() {
                         +{q}
                       </button>
                     ))}
-                    {longPosition && longPosition.quantity > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSide("SELL");
-                          setQuantity(String(longPosition.quantity));
-                        }}
-                        className="px-2 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded text-[10px] font-bold"
-                        title="Sell all shares of this stock"
-                      >
-                        MAX ({longPosition.quantity})
-                      </button>
-                    )}
+
+                    {/* Max Buy Chip */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSide("BUY");
+                        setQuantity(String(Math.max(1, maxBuyQty)));
+                      }}
+                      className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 border border-blue-500/40 rounded text-[10px] font-bold"
+                      title="Set quantity to maximum buyable shares"
+                    >
+                      Max Buy ({maxBuyQty})
+                    </button>
+
+                    {/* Max Short Chip */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSide("SHORT");
+                        setQuantity(String(Math.max(1, maxShortQty)));
+                      }}
+                      className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded text-[10px] font-bold"
+                      title="Set quantity to maximum shortable shares"
+                    >
+                      Max Short ({maxShortQty})
+                    </button>
                   </div>
                 </div>
+
                 <input
                   type="number"
                   min="1"
@@ -261,7 +433,7 @@ export default function StockDetail() {
                 />
               </div>
 
-              {/* Order Cost, 1% Tax & Proceeds */}
+              {/* Order Cost, 0.1% Tax & Proceeds */}
               <div className="p-3 bg-[var(--bg-root)] rounded border border-[var(--border-subtle)] space-y-1.5 text-xs font-mono">
                 <div className="flex justify-between">
                   <span className="text-[var(--text-muted)]">Gross Value:</span>
@@ -286,7 +458,7 @@ export default function StockDetail() {
 
                 <div className="flex justify-between text-[10px] text-[var(--text-muted)] border-t border-[var(--border-subtle)] pt-1">
                   <span>Cash Balance:</span>
-                  <span>₹{cashBalance?.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                  <span>₹{cashBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
                 </div>
               </div>
 
@@ -303,7 +475,7 @@ export default function StockDetail() {
                   </div>
                   {result.taxDeducted !== undefined && result.taxDeducted > 0 && (
                     <div className="flex items-center justify-between text-[10px] pl-6 text-amber-400">
-                      <span>0.1% STT to Treasury:</span>
+                      <span>0.1% STT Deducted:</span>
                       <span>₹{result.taxDeducted.toFixed(2)}</span>
                     </div>
                   )}
@@ -318,7 +490,7 @@ export default function StockDetail() {
                 </div>
               )}
 
-              {/* Action Button */}
+              {/* Main Submit Button */}
               <button
                 onClick={handleAction}
                 disabled={loading || numQty <= 0}

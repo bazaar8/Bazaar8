@@ -181,6 +181,23 @@ mongoose.connect(MONGO_URI, {
   console.error("❌ MongoDB connection error:", err.message);
 });
 
+// Pre-seed 30 historical minutes so charts have 30+ candles immediately
+function seedHistoricalCandles() {
+  const now = Date.now();
+  Object.keys(cachedLivePrices).forEach(ticker => {
+    if (!cachedPriceHistory[ticker] || Object.keys(cachedPriceHistory[ticker]).length < 10) {
+      cachedPriceHistory[ticker] = {};
+      const base = cachedLivePrices[ticker].basePrice || cachedLivePrices[ticker].price || 1000;
+      let p = base;
+      for (let i = 30; i >= 1; i--) {
+        const timeKey = now - (i * 60 * 1000); // 1-minute historical increments
+        p = p * (1 + (Math.random() - 0.5) * 0.008);
+        cachedPriceHistory[ticker][timeKey] = Number(p.toFixed(2));
+      }
+    }
+  });
+}
+
 // --- SIMULATION ENGINES ---
 function startSimulationEngines() {
   // 1. AUTO-IPO ENGINE (Every 3 seconds)
@@ -433,12 +450,12 @@ function startSimulationEngines() {
           timestamp: now
         };
 
-        // Bounded memory buffer (Keeps last 60 ticks per stock)
+        // Bounded memory buffer: 360 points * 5s = 30 minutes of real-time history
         if (!cachedPriceHistory[ticker]) cachedPriceHistory[ticker] = {};
-        if (tickCount % 6 === 0) {
+        if (tickCount % 10 === 0) { // Every 5 seconds
           cachedPriceHistory[ticker][now] = Number(newPrice.toFixed(2));
           const keys = Object.keys(cachedPriceHistory[ticker]);
-          if (keys.length > 60) delete cachedPriceHistory[ticker][keys[0]];
+          if (keys.length > 360) delete cachedPriceHistory[ticker][keys[0]]; // Keep last 30 mins
         }
       }
 
@@ -1109,4 +1126,21 @@ process.on("unhandledRejection", (reason) => console.error("Unhandled Rejection:
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(` MarketSim Native MongoDB + Socket.io Server running on port ${PORT}`);
+});
+
+app.get("/api/history/:ticker", authMiddleware, (req, res) => {
+  const ticker = req.params.ticker?.toUpperCase();
+  const limit = Math.min(parseInt(req.query.limit, 10) || 120, 1440); // Allows loading up to 1440 candles
+  
+  const historyObj = cachedPriceHistory[ticker] || {};
+  const sortedTimestamps = Object.keys(historyObj).sort((a, b) => Number(a) - Number(b));
+  
+  // Return the exact slice of historical data requested by the client's zoom level
+  const slicedTimestamps = sortedTimestamps.slice(-limit);
+  const result = {};
+  slicedTimestamps.forEach(ts => {
+    result[ts] = historyObj[ts];
+  });
+
+  res.json({ data: result });
 });

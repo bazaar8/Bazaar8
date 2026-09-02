@@ -1,10 +1,13 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { API_URL } from "../config/api";
 
 interface CustomCandleChartProps {
   ticker: string;
   basePrice: number;
   currentPrice: number;
+  historyData?: Record<string, number>;
+  timeframe?: "1m" | "5m" | "15m";
+  onScrollBack?: () => void;
 }
 
 interface Candle {
@@ -15,22 +18,87 @@ interface Candle {
   close: number;
 }
 
-export default function CustomCandleChart({ ticker, basePrice, currentPrice }: CustomCandleChartProps) {
+export default function CustomCandleChart({
+  ticker,
+  basePrice,
+  currentPrice,
+  historyData,
+  timeframe = "1m",
+  onScrollBack
+}: CustomCandleChartProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [hoverData, setHoverData] = useState<{ time: string; price: number; x: number; y: number } | null>(null);
 
-  const [visibleCount, setVisibleCount] = useState(40); 
-  const [candleOffset, setCandleOffset] = useState(0);  
-  const [priceScale, setPriceScale] = useState(0.15);   
-  
+  const [visibleCount, setVisibleCount] = useState(40);
+  const [candleOffset, setCandleOffset] = useState(0);
+  const [priceScale, setPriceScale] = useState(0.15);
+
   const isDraggingX = useRef(false);
   const isDraggingY = useRef(false);
   const isDraggingTime = useRef(false);
   const lastMouseX = useRef(0);
   const lastMouseY = useRef(0);
+  const scrollTriggerLock = useRef(false);
 
+  // Timeframe interval in milliseconds
+  const bucketSize = useMemo(() => {
+    switch (timeframe) {
+      case "5m":
+        return 5 * 60 * 1000;
+      case "15m":
+        return 15 * 60 * 1000;
+      case "1m":
+      default:
+        return 60 * 1000;
+    }
+  }, [timeframe]);
+
+  // Helper to convert ticks to candles
+  const processRawTicksToCandles = (rawTicks: { ts: number; price: number }[], bSize: number): Candle[] => {
+    if (rawTicks.length === 0) return [];
+    rawTicks.sort((a, b) => a.ts - b.ts);
+
+    const grouped = new Map<number, number[]>();
+    rawTicks.forEach((tick) => {
+      const bucket = Math.floor(tick.ts / bSize) * bSize;
+      if (!grouped.has(bucket)) grouped.set(bucket, []);
+      grouped.get(bucket)!.push(tick.price);
+    });
+
+    const processed: Candle[] = [];
+    Array.from(grouped.keys())
+      .sort()
+      .forEach((bucketTs) => {
+        const prices = grouped.get(bucketTs)!;
+        processed.push({
+          time: new Date(bucketTs).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+          open: prices[0],
+          high: Math.max(...prices),
+          low: Math.min(...prices),
+          close: prices[prices.length - 1]
+        });
+      });
+
+    return processed;
+  };
+
+  // Synchronize candles when parent passes historyData or changes timeframe
   useEffect(() => {
+    if (historyData && Object.keys(historyData).length > 0) {
+      const rawTicks = Object.keys(historyData).map((ts) => ({
+        ts: parseInt(ts, 10),
+        price: Number(historyData[ts])
+      }));
+
+      const processed = processRawTicksToCandles(rawTicks, bucketSize);
+      if (processed.length > 0) {
+        setCandles(processed);
+        return;
+      }
+    }
+
+    // Default fetch from API if historyData is not passed
     const fetchHistory = async () => {
       try {
         const token = localStorage.getItem("bazaar_jwt_token");
@@ -38,9 +106,9 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
           headers: { Authorization: `Bearer ${token}` }
         });
         const json = await res.json();
-        
-        let rawTicks: {ts: number, price: number}[] = [];
-        
+
+        let rawTicks: { ts: number; price: number }[] = [];
+
         if (json.data) {
           if (Array.isArray(json.data)) {
             rawTicks = json.data.map((d: any) => ({
@@ -48,7 +116,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
               price: Number(d.price)
             }));
           } else {
-            rawTicks = Object.keys(json.data).map(ts => ({
+            rawTicks = Object.keys(json.data).map((ts) => ({
               ts: parseInt(ts, 10),
               price: Number(json.data[ts])
             }));
@@ -56,54 +124,42 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
         }
 
         if (rawTicks.length > 0) {
-          rawTicks.sort((a, b) => a.ts - b.ts);
-          const bucketSize = 120000; 
-          const grouped = new Map<number, number[]>();
-          
-          rawTicks.forEach(tick => {
-            const bucket = Math.floor(tick.ts / bucketSize) * bucketSize;
-            if (!grouped.has(bucket)) grouped.set(bucket, []);
-            grouped.get(bucket)!.push(tick.price);
-          });
-
-          const processed: Candle[] = [];
-          Array.from(grouped.keys()).sort().forEach(bucketTs => {
-            const prices = grouped.get(bucketTs)!;
-            processed.push({
-              time: new Date(bucketTs).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-              open: prices[0],
-              high: Math.max(...prices),
-              low: Math.min(...prices),
-              close: prices[prices.length - 1]
-            });
-          });
-
+          const processed = processRawTicksToCandles(rawTicks, bucketSize);
           if (processed.length > 0) {
-             setCandles(processed);
-             return;
+            setCandles(processed);
+            return;
           }
         }
 
-        // Fallback if empty
-        setCandles([{
-          time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-          open: basePrice, high: basePrice, low: basePrice, close: basePrice
-        }]);
+        setCandles([
+          {
+            time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+            open: basePrice,
+            high: basePrice,
+            low: basePrice,
+            close: basePrice
+          }
+        ]);
       } catch (err) {
         console.error("Failed to fetch history:", err);
-        setCandles([{
-          time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-          open: basePrice, high: basePrice, low: basePrice, close: basePrice
-        }]);
+        setCandles([
+          {
+            time: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+            open: basePrice,
+            high: basePrice,
+            low: basePrice,
+            close: basePrice
+          }
+        ]);
       }
     };
 
     fetchHistory();
-    // Poll history every 60s as a fallback sync, currentPrice prop handles live updates
     const interval = setInterval(fetchHistory, 60000);
     return () => clearInterval(interval);
-  }, [ticker, basePrice]);
+  }, [ticker, basePrice, historyData, bucketSize]);
 
+  // Handle live tick updates
   useEffect(() => {
     if (!currentPrice || candles.length === 0) return;
     setCandles((prev) => {
@@ -117,6 +173,19 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     });
   }, [currentPrice]);
 
+  // Request more data when dragging or scrolling near the earliest historical candle
+  const checkAndTriggerPaging = (offset: number) => {
+    const maxOffset = Math.max(0, candles.length - visibleCount);
+    if (offset >= maxOffset - 5 && onScrollBack && !scrollTriggerLock.current) {
+      scrollTriggerLock.current = true;
+      onScrollBack();
+      setTimeout(() => {
+        scrollTriggerLock.current = false;
+      }, 1000);
+    }
+  };
+
+  // Canvas render loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length === 0) return;
@@ -137,7 +206,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     const chartHeight = height - bottomMargin;
 
     const yOffset = 15;
-    const effectiveHeight = chartHeight - (yOffset * 2);
+    const effectiveHeight = chartHeight - yOffset * 2;
 
     ctx.clearRect(0, 0, width, height);
 
@@ -158,10 +227,10 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     const range = maxPrice - minPrice || 1;
 
     const style = getComputedStyle(document.documentElement);
-    const upColor = style.getPropertyValue('--up-color').trim() || '#089981';
-    const downColor = style.getPropertyValue('--down-color').trim() || '#f23645';
-    const textColor = style.getPropertyValue('--text-muted').trim() || '#94a3b8';
-    const gridColor = 'rgba(255, 255, 255, 0.04)';
+    const upColor = style.getPropertyValue("--up-color").trim() || "#089981";
+    const downColor = style.getPropertyValue("--down-color").trim() || "#f23645";
+    const textColor = style.getPropertyValue("--text-muted").trim() || "#94a3b8";
+    const gridColor = "rgba(255, 255, 255, 0.04)";
 
     ctx.lineWidth = 1;
     const gridSteps = 5;
@@ -185,7 +254,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
 
     visibleCandles.forEach((candle, idx) => {
       const fractionalOffset = candleOffset % 1;
-      const x = (idx * slotWidth) + (slotWidth / 2) + (fractionalOffset * slotWidth);
+      const x = idx * slotWidth + slotWidth / 2 + fractionalOffset * slotWidth;
 
       if (x < 0 || x > chartWidth) return;
 
@@ -266,15 +335,15 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     if (mouseX > chartWidth) {
       isDraggingY.current = true;
       lastMouseY.current = e.clientY;
-      document.body.style.cursor = 'ns-resize';
+      document.body.style.cursor = "ns-resize";
     } else if (mouseY > chartHeight) {
       isDraggingTime.current = true;
       lastMouseX.current = e.clientX;
-      document.body.style.cursor = 'ew-resize';
+      document.body.style.cursor = "ew-resize";
     } else {
       isDraggingX.current = true;
       lastMouseX.current = e.clientX;
-      document.body.style.cursor = 'grabbing';
+      document.body.style.cursor = "grabbing";
     }
   };
 
@@ -282,7 +351,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     isDraggingX.current = false;
     isDraggingY.current = false;
     isDraggingTime.current = false;
-    document.body.style.cursor = 'default';
+    document.body.style.cursor = "default";
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
@@ -310,7 +379,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     isDraggingX.current = false;
     isDraggingY.current = false;
     isDraggingTime.current = false;
-    setHoverData(null); 
+    setHoverData(null);
   };
 
   const processMove = (clientX: number, clientY: number) => {
@@ -321,12 +390,12 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     const chartWidth = rect.width - 65;
     const chartHeight = rect.height - 26;
     const yOffset = 15;
-    const effectiveHeight = chartHeight - (yOffset * 2);
+    const effectiveHeight = chartHeight - yOffset * 2;
 
     if (isDraggingY.current) {
       const deltaY = clientY - lastMouseY.current;
       lastMouseY.current = clientY;
-      setPriceScale(prev => Math.max(0.01, prev + (deltaY * 0.01)));
+      setPriceScale((prev) => Math.max(0.01, prev + deltaY * 0.01));
       setHoverData(null);
       return;
     }
@@ -334,7 +403,11 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
     if (isDraggingTime.current) {
       const deltaX = clientX - lastMouseX.current;
       lastMouseX.current = clientX;
-      setVisibleCount(prev => Math.max(10, Math.min(prev - (deltaX * 0.5), 300)));
+      setVisibleCount((prev) => {
+        const next = Math.max(10, Math.min(prev - deltaX * 0.5, 300));
+        if (next >= prev) checkAndTriggerPaging(candleOffset);
+        return next;
+      });
       setHoverData(null);
       return;
     }
@@ -344,11 +417,13 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       lastMouseX.current = clientX;
       const slotWidth = chartWidth / visibleCount;
       const shift = deltaX / slotWidth;
-      
-      setCandleOffset(prev => {
+
+      setCandleOffset((prev) => {
         const next = prev + shift;
         const maxOffset = Math.max(0, candles.length - visibleCount);
-        return Math.max(0, Math.min(next, maxOffset));
+        const clamped = Math.max(0, Math.min(next, maxOffset));
+        checkAndTriggerPaging(clamped);
+        return clamped;
       });
       setHoverData(null);
       return;
@@ -361,8 +436,8 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
 
     const slotWidth = chartWidth / visibleCount;
     const fractionalOffset = candleOffset % 1;
-    const hoverIdx = Math.floor((mouseX / slotWidth) - fractionalOffset);
-    
+    const hoverIdx = Math.floor(mouseX / slotWidth - fractionalOffset);
+
     const safeOffset = Math.max(0, Math.min(candleOffset, Math.max(0, candles.length - visibleCount)));
     const endIndex = candles.length - Math.floor(safeOffset);
     const startIndex = Math.max(0, endIndex - visibleCount);
@@ -378,7 +453,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       const maxPrice = rawMax + pad;
       const range = maxPrice - minPrice;
 
-      const candleX = (hoverIdx * slotWidth) + (slotWidth / 2) + (fractionalOffset * slotWidth);
+      const candleX = hoverIdx * slotWidth + slotWidth / 2 + fractionalOffset * slotWidth;
       const candleY = yOffset + effectiveHeight - ((item.close - minPrice) / range) * effectiveHeight;
 
       setHoverData({ time: item.time, price: item.close, x: candleX, y: candleY });
@@ -400,15 +475,21 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
       if (!canvas) return;
       const chartWidth = canvas.getBoundingClientRect().width - 65;
       const slotWidth = chartWidth / visibleCount;
-      const shift = e.deltaX / slotWidth; 
-      
-      setCandleOffset(prev => {
+      const shift = e.deltaX / slotWidth;
+
+      setCandleOffset((prev) => {
         const maxOffset = Math.max(0, candles.length - visibleCount);
-        return Math.max(0, Math.min(prev + shift, maxOffset));
+        const next = Math.max(0, Math.min(prev + shift, maxOffset));
+        checkAndTriggerPaging(next);
+        return next;
       });
     } else {
       const zoomSpeed = e.deltaY > 0 ? 4 : -4;
-      setVisibleCount(prev => Math.max(10, Math.min(prev + zoomSpeed, 300))); 
+      setVisibleCount((prev) => {
+        const next = Math.max(10, Math.min(prev + zoomSpeed, 300));
+        if (e.deltaY > 0) checkAndTriggerPaging(candleOffset);
+        return next;
+      });
     }
   };
 
@@ -424,20 +505,26 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
         <div className="flex items-center gap-3">
           <span className="font-bold text-[var(--text-main)]">{ticker} Feed</span>
           <span className="text-[10px] text-[var(--text-muted)] border px-1.5 py-0.5 border-[var(--border-subtle)] rounded hidden sm:inline-block">
-            {Math.round(visibleCount)} CANDLES
+            {Math.round(visibleCount)} CANDLES ({timeframe})
           </span>
           {hoverData && (
             <span className="text-[var(--text-main)] text-xs hidden sm:inline-block">
-              Price: <strong className={hoverData.price >= basePrice ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
+              Price:{" "}
+              <strong className={hoverData.price >= basePrice ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}>
                 ₹{hoverData.price.toFixed(2)}
-              </strong> ({hoverData.time})
+              </strong>{" "}
+              ({hoverData.time})
             </span>
           )}
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-[var(--up-color)] font-bold">
-          <button 
-            onClick={handleReset} 
-            className={`border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] px-2 py-0.5 rounded transition-opacity ${candleOffset > 1 || priceScale !== 0.15 || visibleCount !== 40 ? 'opacity-100 hover:bg-[var(--border-subtle)] cursor-pointer' : 'opacity-0 pointer-events-none'}`}
+          <button
+            onClick={handleReset}
+            className={`border border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] px-2 py-0.5 rounded transition-opacity ${
+              candleOffset > 1 || priceScale !== 0.15 || visibleCount !== 40
+                ? "opacity-100 hover:bg-[var(--border-subtle)] cursor-pointer"
+                : "opacity-0 pointer-events-none"
+            }`}
           >
             RESET
           </button>
@@ -457,7 +544,7 @@ export default function CustomCandleChart({ ticker, basePrice, currentPrice }: C
           onTouchEnd={handleTouchEnd}
           onTouchCancel={handleTouchEnd}
           onWheel={handleWheel}
-          style={{ touchAction: 'none' }}
+          style={{ touchAction: "none" }}
           className="w-full h-full block cursor-crosshair touch-none"
         />
       </div>

@@ -159,19 +159,40 @@ export default function CustomCandleChart({
     return () => clearInterval(interval);
   }, [ticker, basePrice, historyData, bucketSize]);
 
-  // Handle live tick updates
+// Handle live tick updates & automatically generate new candles based on timeframe
   useEffect(() => {
     if (!currentPrice || candles.length === 0) return;
+
     setCandles((prev) => {
       const next = [...prev];
       const last = { ...next[next.length - 1] };
-      last.close = currentPrice;
-      if (currentPrice > last.high) last.high = currentPrice;
-      if (currentPrice < last.low) last.low = currentPrice;
-      next[next.length - 1] = last;
+      const nowTs = Date.now();
+      
+      // Calculate which time bucket 'now' belongs in
+      const currentBucketTs = Math.floor(nowTs / bucketSize) * bucketSize;
+      const currentBucketTimeStr = new Date(currentBucketTs).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+      // If the time string is the same, update the existing candle
+      if (last.time === currentBucketTimeStr) {
+        last.close = currentPrice;
+        if (currentPrice > last.high) last.high = currentPrice;
+        if (currentPrice < last.low) last.low = currentPrice;
+        next[next.length - 1] = last;
+      } 
+      // If we crossed into a new bucket interval, create a brand new candle
+      else {
+        next.push({
+          time: currentBucketTimeStr,
+          open: currentPrice,
+          high: currentPrice,
+          low: currentPrice,
+          close: currentPrice
+        });
+      }
+      
       return next;
     });
-  }, [currentPrice]);
+  }, [currentPrice, bucketSize]);
 
   // Request more data when dragging or scrolling near the earliest historical candle
   const checkAndTriggerPaging = (offset: number) => {

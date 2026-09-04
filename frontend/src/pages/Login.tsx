@@ -37,12 +37,17 @@ export default function Login() {
       await loginUser(email, password);
     } catch (err: any) {
       setIsSubmitting(false);
-      if (err.code === "auth/invalid-credential" || err.code === "auth/user-not-found" || err.code === "auth/wrong-password") {
-        setError("Invalid email address or password.");
-      } else if (err.code === "auth/too-many-requests") {
+      
+      const errorMessage = 
+        err?.response?.data?.error?.message || 
+        err?.error?.message ||                 
+        err?.message ||                        
+        "Invalid email address or password. Please check your credentials.";
+        
+      if (errorMessage.toLowerCase().includes("too many requests") || err.status === 429) {
         setError("Too many failed attempts. Please try again later.");
       } else {
-        setError("An error occurred during sign in. Check console for details.");
+        setError(errorMessage);
       }
     }
   };

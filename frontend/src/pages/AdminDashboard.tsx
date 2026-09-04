@@ -3,7 +3,7 @@ import { httpsCallable, API_URL } from "../config/api";
 import { socket } from "../config/socket";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../hooks/useTheme"; 
-import { useNotifications } from "../context/NotificationContext"; // <-- Added Notifications
+import { useNotifications } from "../context/NotificationContext";
 import { 
   LayoutDashboard, Users, Newspaper, 
   Sparkles, Power, Pause, Play, ShieldAlert, LogOut,
@@ -385,6 +385,20 @@ export default function AdminDashboard() {
     }
     setSingleImpacts(prev => ({ ...prev, [ticker]: val }));
     setImpactValue("");
+  };
+
+  const handleDeleteIPO = async (ipoId: string, ticker: string) => {
+    if (!window.confirm(`⚠️ Permanently DELETE the IPO for "${ticker}"?\nAll subscriber funds will be automatically refunded to user cash balances.`)) return;
+    setProcessingAction(`${ipoId}-delete`);
+    logAdminAction("DELETE_IPO", { ipoSymbol: ticker, ipoId });
+    try {
+      await httpsCallable('adminDeleteIPO')({ ipoId });
+      notify({ type: "ipo", title: "IPO Deleted", message: `IPO ${ticker} deleted and applicant funds refunded.`, impact: "neutral" });
+    } catch (err: any) {
+      notify({ type: "alert", title: "Error deleting IPO", message: err.message, impact: "negative" });
+    } finally {
+      setProcessingAction(null);
+    }
   };
 
   const handleRemoveImpact = (ticker: string) => {
@@ -1630,8 +1644,8 @@ export default function AdminDashboard() {
                                 </div>
                               ) : (
                                 <div className="flex items-center justify-end gap-1.5 group">
-                                  <span className={`font-bold ${Number(ipo.listingPremiumPct || 0) >= 0 ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
-                                    {Number(ipo.listingPremiumPct || 0) >= 0 ? '+' : ''}{ipo.listingPremiumPct || 0}%
+                                  <span className={`font-bold ${Number(ipo.listingPremiumPct || 0) > 0 ? 'text-[var(--up-color)]' : Number(ipo.listingPremiumPct || 0) < 0 ? 'text-[var(--down-color)]' : 'text-[var(--text-muted)]'}`}>
+                                    {Number(ipo.listingPremiumPct || 0) > 0 ? `+${ipo.listingPremiumPct}%` : `${ipo.listingPremiumPct || 0}%`}
                                   </span>
                                   <button
                                     onClick={() => { setEditingGmpId(ipo.id || ipo.ipoId); setGmpValue(String(ipo.listingPremiumPct || 0)); }}
@@ -1659,27 +1673,35 @@ export default function AdminDashboard() {
                                 'bg-[#3b82f615] text-[#3b82f6]'
                               }`}>{ipo.status}</span>
                             </td>
-                            <td className="p-3 flex justify-end gap-2">
+                            <td className="p-3 flex justify-end gap-1.5">
                               <button 
                                 onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'close')}
                                 disabled={ipo.status !== 'open' || processingAction === `${ipo.id || ipo.ipoId}-close`}
-                                className="px-2 py-1 flex items-center gap-1 bg-[#f59e0b15] hover:opacity-80 border border-[#f59e0b50] disabled:opacity-50 text-[#f59e0b] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
+                                className="px-2 py-1 flex items-center gap-1 bg-[#f59e0b15] hover:opacity-80 border border-[#f59e0b50] disabled:opacity-50 text-[#f59e0b] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
                               >
                                 {processingAction === `${ipo.id || ipo.ipoId}-close` ? <div className="w-3 h-3 border-2 border-[#f59e0b] border-t-transparent rounded-full animate-spin" /> : <><Pause className="w-3 h-3" /> Close</>}
                               </button>
                               <button 
                                 onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'allot')}
                                 disabled={ipo.status !== 'closed' || processingAction === `${ipo.id || ipo.ipoId}-allot`}
-                                className="px-2 py-1 flex items-center gap-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-colors"
+                                className="px-2 py-1 flex items-center gap-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] rounded text-[9px] font-bold uppercase justify-center transition-colors"
                               >
                                 {processingAction === `${ipo.id || ipo.ipoId}-allot` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Allot</>}
                               </button>
                               <button 
                                 onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'list')}
                                 disabled={ipo.status !== 'allotted' || processingAction === `${ipo.id || ipo.ipoId}-list`}
-                                className="px-2 py-1 flex items-center gap-1 bg-[#08998115] hover:opacity-80 border border-[#08998150] disabled:opacity-50 text-[var(--up-color)] rounded text-[9px] font-bold uppercase w-20 justify-center transition-opacity"
+                                className="px-2 py-1 flex items-center gap-1 bg-[#08998115] hover:opacity-80 border border-[#08998150] disabled:opacity-50 text-[var(--up-color)] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
                               >
                                  {processingAction === `${ipo.id || ipo.ipoId}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Sparkles className="w-3 h-3" /> List</>}
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteIPO((ipo.id || ipo.ipoId), ipo.ticker)}
+                                disabled={processingAction === `${ipo.id || ipo.ipoId}-delete`}
+                                className="px-2 py-1 flex items-center gap-1 bg-[#f2364515] hover:opacity-80 border border-[#f2364550] disabled:opacity-50 text-[#f23645] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
+                                title="Delete IPO and refund subscribers"
+                              >
+                                 {processingAction === `${ipo.id || ipo.ipoId}-delete` ? <div className="w-3 h-3 border-2 border-[#f23645] border-t-transparent rounded-full animate-spin" /> : <Trash2 className="w-3 h-3" />}
                               </button>
                             </td>
                           </tr>

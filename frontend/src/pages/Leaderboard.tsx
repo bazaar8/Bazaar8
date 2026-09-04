@@ -212,28 +212,6 @@ export default function Leaderboard() {
             </div>
 
           </div>
-
-          <div className="w-full mt-4 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded-2xl p-3 font-mono">
-            <div className="flex items-center justify-between text-[11px] mb-1.5 font-bold">
-              <span className="text-[var(--up-color)] flex items-center gap-1">
-                <TrendingUp className="w-3.5 h-3.5" /> {arenaStats.bullsCount} Bulls ({arenaStats.winRate}%)
-              </span>
-              <span className="text-[var(--down-color)] flex items-center gap-1">
-                {arenaStats.bearsCount} Drawdowns ({100 - arenaStats.winRate}%) <TrendingDown className="w-3.5 h-3.5" />
-              </span>
-            </div>
-            <div className="w-full h-2 rounded-full overflow-hidden bg-[var(--border-subtle)] flex">
-              <div 
-                className="h-full bg-[var(--up-color)] transition-all duration-500" 
-                style={{ width: `${arenaStats.winRate}%` }} 
-              />
-              <div 
-                className="h-full bg-[var(--down-color)] transition-all duration-500" 
-                style={{ width: `${100 - arenaStats.winRate}%` }} 
-              />
-            </div>
-          </div>
-
         </div>
       </div>
 

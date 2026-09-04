@@ -1,12 +1,16 @@
 import { useState, useEffect } from "react";
 import { httpsCallable, API_URL } from "../config/api";
 import { useAuth } from "../context/AuthContext";
-import { CheckCircle, TrendingUp, Clock, X } from "lucide-react";
+import { useUserTradingData } from "../hooks/useUserTradingData";
+import { CheckCircle, TrendingUp, Clock, X, AlertCircle, Wallet } from "lucide-react";
 import { useNotifications } from "../context/NotificationContext";
 
 export default function IPO() {
   const { user } = useAuth();
   const { notify } = useNotifications();
+  const tradingData = useUserTradingData() as any;
+  const userCash = Number(tradingData?.cashBalance ?? 0);
+
   const [ipos, setIpos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingIpoId, setProcessingIpoId] = useState<string | null>(null);
@@ -34,14 +38,28 @@ export default function IPO() {
 
   useEffect(() => {
     fetchIpos();
-    // Poll for live IPO subscription updates every 5 seconds
     const interval = setInterval(fetchIpos, 5000);
     return () => clearInterval(interval);
   }, [user]);
 
+  const selectedCost = selectedIpo 
+    ? lotsToApply * Number(selectedIpo.price) * (Number(selectedIpo.lotSize) || 1)
+    : 0;
+  const hasInsufficientBalance = selectedCost > userCash;
+
   const handleApply = async () => {
     if (!selectedIpo || !user || lotsToApply < 1) return;
     
+    if (hasInsufficientBalance) {
+      notify({
+        type: "alert",
+        title: "Insufficient Balance",
+        message: `You need ₹${selectedCost.toLocaleString("en-IN")}, but your available cash is ₹${userCash.toLocaleString("en-IN")}`,
+        impact: "negative"
+      });
+      return;
+    }
+
     const ipoId = selectedIpo.ipoId || selectedIpo._id;
     setProcessingIpoId(ipoId);
     
@@ -103,6 +121,11 @@ export default function IPO() {
           <h1 className="text-lg font-bold text-[var(--text-main)] tracking-tight">Primary Market (IPO)</h1>
           <p className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5 uppercase tracking-wider">Initial Public Offerings</p>
         </div>
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl font-mono text-xs">
+          <Wallet className="w-3.5 h-3.5 text-[var(--up-color)]" />
+          <span className="text-[var(--text-muted)]">Available Cash:</span>
+          <span className="font-bold text-[var(--text-main)]">₹{userCash.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-6">
@@ -117,6 +140,7 @@ export default function IPO() {
             const lotSize = Number(ipo.lotSize) || 1;
             const minInvestment = price * lotSize;
             const gmp = Number(ipo.listingPremiumPct) || 0;
+            const estListingPrice = Math.max(0.01, price * (1 + gmp / 100)); // Clamp at 0.01
             const subscriptionRate = ipo.subscriptionRate !== undefined ? Number(ipo.subscriptionRate) : Number(((Number(ipo.totalSubscribedLots) || 0) / (Number(ipo.totalLots) || 1)).toFixed(2));
             
             const mySub = ipo.subscriptions?.find((s: any) => s.uid === user?.uid);
@@ -186,9 +210,15 @@ export default function IPO() {
                       <div className="text-[10px] text-[var(--text-muted)] uppercase">Min Investment</div>
                       <div className="font-bold text-[var(--text-main)] mt-0.5">₹{minInvestment.toFixed(2)}</div>
                     </div>
+                    {/* Fixed Negative GMP Display */}
                     <div className="p-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded">
                       <div className="text-[10px] text-[var(--text-muted)] uppercase">Expected GMP</div>
-                      <div className="font-bold text-[var(--up-color)] mt-0.5">+{gmp}%</div>
+                      <div className={`font-bold mt-0.5 ${gmp > 0 ? 'text-[var(--up-color)]' : gmp < 0 ? 'text-[var(--down-color)]' : 'text-[var(--text-muted)]'}`}>
+                        {gmp > 0 ? `+${gmp}%` : `${gmp}%`}
+                        <span className="block text-[9px] font-normal text-[var(--text-muted)]">
+                          Est: ₹{estListingPrice.toFixed(2)}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -295,6 +325,14 @@ export default function IPO() {
                 <span className="text-[var(--text-muted)]">Lot Size:</span>
                 <span className="text-[var(--text-main)] font-bold">{Number(selectedIpo.lotSize) || 1} shares</span>
               </div>
+              {/* Proper GMP Format in Modal */}
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)]">Expected GMP:</span>
+                <span className={`font-bold ${Number(selectedIpo.listingPremiumPct || 0) > 0 ? 'text-[var(--up-color)]' : Number(selectedIpo.listingPremiumPct || 0) < 0 ? 'text-[var(--down-color)]' : 'text-[var(--text-muted)]'}`}>
+                  {Number(selectedIpo.listingPremiumPct || 0) > 0 ? `+${selectedIpo.listingPremiumPct}%` : `${selectedIpo.listingPremiumPct || 0}%`}
+                </span>
+              </div>
+
               <div className="flex items-center justify-between pt-2 border-t border-[var(--border-subtle)]">
                 <span className="text-[var(--text-muted)]">Select Lots:</span>
                 <div className="flex items-center gap-2">
@@ -311,18 +349,36 @@ export default function IPO() {
               </div>
               <div className="flex justify-between pt-2 border-t border-[var(--border-subtle)]">
                 <span className="text-[var(--text-muted)]">Total Amount Blocked:</span>
-                <span className="text-[var(--up-color)] font-bold">
-                  ₹{(lotsToApply * Number(selectedIpo.price) * (Number(selectedIpo.lotSize) || 1)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                <span className="text-[var(--text-main)] font-bold">
+                  ₹{selectedCost.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </span>
               </div>
+
+              {/* Explicit Insufficient Balance Warning */}
+              {hasInsufficientBalance && (
+                <div className="p-2.5 bg-rose-500/10 border border-rose-500/30 rounded flex items-start gap-2 text-[10px] text-[var(--down-color)]">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  <span>
+                    Insufficient Balance: You need ₹{selectedCost.toLocaleString("en-IN")}, but your balance is ₹{userCash.toLocaleString("en-IN")}.
+                  </span>
+                </div>
+              )}
             </div>
 
             <button
               onClick={handleApply}
-              disabled={processingIpoId === (selectedIpo.ipoId || selectedIpo._id)}
-              className="w-full py-2 bg-[var(--up-color)] hover:opacity-90 disabled:opacity-50 text-white text-xs font-bold uppercase rounded transition-opacity"
+              disabled={processingIpoId === (selectedIpo.ipoId || selectedIpo._id) || hasInsufficientBalance}
+              className={`w-full py-2.5 text-white text-xs font-bold uppercase tracking-wider rounded transition-opacity ${
+                hasInsufficientBalance 
+                  ? 'bg-zinc-700 cursor-not-allowed opacity-50' 
+                  : 'bg-[var(--up-color)] hover:opacity-90'
+              }`}
             >
-              {processingIpoId === (selectedIpo.ipoId || selectedIpo._id) ? "Processing..." : "Submit Application"}
+              {processingIpoId === (selectedIpo.ipoId || selectedIpo._id)
+                ? "Processing..." 
+                : hasInsufficientBalance 
+                ? "Insufficient Balance" 
+                : "Submit Application"}
             </button>
           </div>
         </div>

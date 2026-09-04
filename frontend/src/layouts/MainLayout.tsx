@@ -3,7 +3,7 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../hooks/useTheme';
 import { useLivePrices } from '../hooks/useLivePrices';
-import { LogOut, Bell, Sun, Moon, User, X, Newspaper, Menu, Volume2, VolumeX, CheckCheck, Trash2, TrendingUp, TrendingDown, Rocket, Sparkles } from 'lucide-react';
+import { LogOut, Bell, Sun, Moon, User, X, Newspaper, Menu, CheckCheck, Trash2, TrendingUp, TrendingDown, Rocket, Sparkles } from 'lucide-react';
 import { useNotifications } from '../context/NotificationContext';
 import { socket } from '../config/socket';
 import logoUrl from '../assets/logo.png';
@@ -17,8 +17,6 @@ export default function MainLayout() {
   const { 
     notifications, 
     unreadCount, 
-    soundEnabled, 
-    setSoundEnabled, 
     notify, 
     markAsRead, 
     markAllAsRead, 
@@ -31,7 +29,6 @@ export default function MainLayout() {
   const [notificationFilter, setNotificationFilter] = useState<'all' | 'unread'>('all');
   const alertsRef = useRef<HTMLDivElement>(null);
 
-  // Close alerts dropdown on outside click
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       if (alertsRef.current && !alertsRef.current.contains(e.target as Node)) {
@@ -61,7 +58,6 @@ export default function MainLayout() {
     }
   }, [marketStatus, profile, location.pathname, navigate, isAppReady]);
 
-  // Real-time news catalyst listener - triggers notification from Socket.io
   useEffect(() => {
     if (!user) return;
 
@@ -178,16 +174,6 @@ export default function MainLayout() {
                       </div>
 
                       <div className="flex items-center gap-1 text-[var(--text-muted)]">
-                        <button
-                          onClick={() => setSoundEnabled(!soundEnabled)}
-                          className={`p-1.5 rounded-lg hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] transition-colors ${
-                            soundEnabled ? "text-[var(--up-color)]" : "text-[var(--text-muted)] opacity-60"
-                          }`}
-                          title={soundEnabled ? "Mute alert chime" : "Enable alert chime"}
-                        >
-                          {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-                        </button>
-
                         {unreadCount > 0 && (
                           <button
                             onClick={markAllAsRead}

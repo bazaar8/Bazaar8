@@ -224,8 +224,11 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
             {longHoldings.map(h => {
-              const live = Number(prices[h.ticker]?.price ?? h.avgPrice) || 0;
-              const pl = (live - Number(h.avgPrice)) * Number(h.quantity);
+              const entry = Number(h.avgPrice) || 0;
+              const qty = Number(h.quantity) || 0;
+              const live = Number(prices[h.ticker]?.price ?? entry) || 0;
+              const pl = (live - entry) * qty;
+              const plPct = entry > 0 ? ((live - entry) / entry) * 100 : 0;
               const isUp = pl >= 0;
 
               return (
@@ -235,23 +238,23 @@ export default function Dashboard() {
                       {h.ticker}
                     </Link>
                     <span className="text-[10px] font-mono font-bold text-[var(--up-color)] bg-[var(--up-color)]/10 px-2 py-0.5 rounded-full">
-                      +{h.quantity} LONG
+                      +{qty} LONG
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-[var(--text-muted)]">Entry: ₹{Number(h.avgPrice).toFixed(2)}</span>
+                    <span className="text-[var(--text-muted)]">Entry: ₹{entry.toFixed(2)}</span>
                     <span className="text-[var(--text-main)]">Live: ₹{live.toFixed(2)}</span>
                   </div>
                   <div className="flex items-center justify-between border-t border-[var(--border-subtle)] pt-2 text-xs font-mono">
                     <span className="text-[var(--text-muted)]">Position P&L:</span>
                     <span className={`font-bold ${isUp ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
-                      {isUp ? "+" : ""}₹{pl.toFixed(2)}
+                      {isUp ? "+" : ""}₹{pl.toFixed(2)} ({isUp ? "+" : ""}{plPct.toFixed(2)}%)
                     </span>
                   </div>
                   <Link 
                     to={`/stocks/${h.ticker}`}
                     className="w-full text-center py-1 text-[10px] font-mono font-bold uppercase rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:bg-[var(--down-color)] hover:text-white transition-colors"
-                  >
+                 >
                     Sell / Manage {h.ticker}
                   </Link>
                 </div>
@@ -259,8 +262,11 @@ export default function Dashboard() {
             })}
 
             {shortHoldings.map(h => {
-              const live = Number(prices[h.ticker]?.price ?? h.avgPrice) || 0;
-              const pl = (Number(h.avgPrice) - live) * Number(h.quantity);
+              const entry = Number(h.avgPrice) || 0;
+              const qty = Number(h.quantity) || 0;
+              const live = Number(prices[h.ticker]?.price ?? entry) || 0;
+              const pl = (entry - live) * qty;
+              const plPct = entry > 0 ? ((entry - live) / entry) * 100 : 0;
               const isUp = pl >= 0;
 
               return (
@@ -270,19 +276,19 @@ export default function Dashboard() {
                       {h.ticker}
                     </Link>
                     <span className="text-[10px] font-mono font-bold text-[var(--down-color)] bg-[var(--down-color)]/10 px-2 py-0.5 rounded-full">
-                      -{h.quantity} SHORT
+                      -{qty} SHORT
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-[var(--text-muted)]">Entry: ₹{Number(h.avgPrice).toFixed(2)}</span>
+                    <span className="text-[var(--text-muted)]">Entry: ₹{entry.toFixed(2)}</span>
                     <span className="text-[var(--text-main)]">Live: ₹{live.toFixed(2)}</span>
                   </div>
                   <div className="flex items-center justify-between border-t border-[var(--border-subtle)] pt-2 text-xs font-mono">
                     <span className="text-[var(--text-muted)]">Position P&L:</span>
                     <span className={`font-bold ${isUp ? "text-[var(--up-color)]" : "text-[var(--down-color)]"}`}>
-                      {isUp ? "+" : ""}₹{pl.toFixed(2)}
+                      {isUp ? "+" : ""}₹{pl.toFixed(2)} ({isUp ? "+" : ""}{plPct.toFixed(2)}%)
                     </span>
-                  </div>
+                 </div>
                   <Link 
                     to={`/stocks/${h.ticker}`}
                     className="w-full text-center py-1 text-[10px] font-mono font-bold uppercase rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:bg-[var(--up-color)] hover:text-white transition-colors"

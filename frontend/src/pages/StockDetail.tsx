@@ -7,7 +7,7 @@ import CustomCandleChart from "../components/CustomCandleChart";
 import { executeTrade } from "../services/tradeService";
 import { 
   ArrowLeft, TrendingUp, TrendingDown, CheckCircle2, 
-  AlertCircle, Zap, Shield, ZoomIn, ZoomOut, RefreshCw 
+  AlertCircle, Zap, Shield, RefreshCw 
 } from "lucide-react";
 import AddToWishlistButton from "../components/AddToWishlistButton";
 import { API_URL } from "../config/api";
@@ -36,11 +36,10 @@ export default function StockDetail() {
     pnlPct?: number;
   } | null>(null);
 
-  // Dynamic Chart History & Zoom State
-  const [historyLimit, setHistoryLimit] = useState<number>(120); // Default 120 candles (2 hours)
+  // Dynamic Chart History State (Locked to 1m timeframe)
+  const [historyLimit, setHistoryLimit] = useState<number>(120); 
   const [chartHistory, setChartHistory] = useState<Record<string, number>>({});
   const [isFetchingHistory, setIsFetchingHistory] = useState<boolean>(false);
-  const [timeframe, setTimeframe] = useState<"1m" | "5m" | "15m">("1m");
 
   const dbData = prices[ticker || ""] as any;
   const catalogData = STOCKS_CATALOG.find((s) => s.ticker === ticker);
@@ -60,20 +59,19 @@ export default function StockDetail() {
   const highestValue = Number(dbData?.high || Math.max(livePrice, stockMeta.basePrice * 1.06));
   const lowestValue = Number(dbData?.low || Math.min(livePrice, stockMeta.basePrice * 0.94));
 
-  // Active Long & Short Positions for this stock
+  // Active Long & Short Positions
   const longPosition = holdings.find((h) => h.ticker === stockMeta.ticker && h.positionType === "long");
   const shortPosition = holdings.find((h) => h.ticker === stockMeta.ticker && h.positionType === "short");
 
   const numQty = Math.max(0, parseInt(quantity, 10) || 0);
   const estimatedTotal = numQty * livePrice;
-  const estimatedTax = estimatedTotal * 0.001; // 0.1% STT
+  const estimatedTax = estimatedTotal * 0.001; 
   const netProceeds = (side === "SELL" || side === "SHORT") ? estimatedTotal - estimatedTax : estimatedTotal + estimatedTax;
 
-  // Max quantities affordable with available cash
   const maxBuyQty = livePrice > 0 ? Math.floor(cashBalance / (livePrice * 1.001)) : 0;
   const maxShortQty = livePrice > 0 ? Math.floor(cashBalance / (livePrice * 1.001)) : 0;
 
-  // Fetch expanded historical price data when zooming out or scrolling back
+  // Fetch expanded historical price data when scrolling back
   const fetchHistoricalData = useCallback(async (limit: number) => {
     try {
       setIsFetchingHistory(true);
@@ -98,13 +96,9 @@ export default function StockDetail() {
     fetchHistoricalData(historyLimit);
   }, [fetchHistoricalData, historyLimit]);
 
-  // Zoom handlers: load more past data when zoomed out
+  // Hidden scroll handler triggered by the chart when scrolling left
   const handleZoomOut = () => {
-    setHistoryLimit((prev) => Math.min(prev + 120, 1440)); // Extends up to 24 hours of data
-  };
-
-  const handleZoomIn = () => {
-    setHistoryLimit((prev) => Math.max(prev - 60, 60)); // Min 60 candles
+    setHistoryLimit((prev) => Math.min(prev + 120, 1440)); 
   };
 
   // Trade Executor
@@ -127,7 +121,6 @@ export default function StockDetail() {
     }
   };
 
-  // Instant Sell All Long Shares
   const handleSellAllLongs = async () => {
     if (!longPosition || longPosition.quantity <= 0) return;
     const qtyToSell = longPosition.quantity;
@@ -148,7 +141,6 @@ export default function StockDetail() {
     }
   };
 
-  // Instant Cover All Shorted Shares
   const handleCoverAllShorts = async () => {
     if (!shortPosition || shortPosition.quantity <= 0) return;
     const qtyToCover = shortPosition.quantity;
@@ -171,7 +163,6 @@ export default function StockDetail() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Top Breadcrumb */}
       <div className="flex items-center justify-between">
         <Link
           to="/stocks"
@@ -182,7 +173,6 @@ export default function StockDetail() {
         </Link>
       </div>
 
-      {/* Main Stock Banner */}
       <div className="terminal-card p-4 md:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3 flex-wrap">
@@ -229,65 +219,25 @@ export default function StockDetail() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6 items-start">
-        {/* Left 2 Cols: Chart with Zoom Toolbar & Historical Range Fetching */}
+        {/* Left 2 Cols: Chart */}
         <div className="lg:col-span-2 w-full flex flex-col gap-4">
-          <div className="terminal-card p-2 flex flex-col h-[490px] w-full overflow-hidden">
-            {/* Interactive Chart Toolbar */}
-            <div className="flex items-center justify-between pb-2 mb-1 border-b border-[var(--border-subtle)] px-2 text-xs font-mono">
-              <div className="flex items-center gap-1.5">
-                {(["1m", "5m", "15m"] as const).map((tf) => (
-                  <button
-                    key={tf}
-                    type="button"
-                    onClick={() => setTimeframe(tf)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase transition-colors ${
-                      timeframe === tf
-                        ? "bg-[#3b82f6] text-white"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-main)] bg-[var(--bg-root)] border border-[var(--border-subtle)]"
-                    }`}
-                  >
-                    {tf}
-                  </button>
-                ))}
-                {isFetchingHistory && (
-                  <span className="flex items-center gap-1 text-[10px] text-amber-400 animate-pulse ml-2">
-                    <RefreshCw className="w-3 h-3 animate-spin" /> Loading past candles...
-                  </span>
-                )}
+          <div className="terminal-card p-2 flex flex-col h-[490px] w-full relative overflow-hidden">
+            
+            {/* Minimal Fetching Indicator */}
+            {isFetchingHistory && (
+              <div className="absolute top-4 right-4 z-10 flex items-center gap-1.5 px-2 py-1 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded text-[10px] text-amber-400 font-mono font-bold uppercase animate-pulse shadow-sm">
+                <RefreshCw className="w-3 h-3 animate-spin" /> Loading past history...
               </div>
-
-              {/* Zoom In/Out & Depth Control */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-[var(--text-muted)] hidden sm:inline">
-                  History: {historyLimit} candles
-                </span>
-                <button
-                  type="button"
-                  onClick={handleZoomIn}
-                  className="p-1 rounded bg-[var(--bg-root)] border border-[var(--border-subtle)] hover:bg-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]"
-                  title="Zoom In"
-                >
-                  <ZoomIn className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleZoomOut}
-                  className="p-1 rounded bg-[var(--bg-root)] border border-[var(--border-subtle)] hover:bg-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)]"
-                  title="Zoom Out / Load More Past History"
-                >
-                  <ZoomOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
+            )}
 
             {/* Candle Chart Render */}
-            <div className="flex-1 w-full h-full overflow-hidden">
+            <div className="flex-1 w-full h-full overflow-hidden mt-2">
               <CustomCandleChart
                 ticker={stockMeta.ticker}
                 basePrice={stockMeta.basePrice}
                 currentPrice={livePrice}
                 historyData={chartHistory}
-                timeframe={timeframe}
+                timeframe="1m" // Locked to 1m
                 onScrollBack={handleZoomOut}
               />
             </div>
@@ -314,14 +264,13 @@ export default function StockDetail() {
           </div>
         </div>
 
-        {/* Right Col: Order Entry Pad & One-Click Position Handlers */}
+        {/* Right Col: Order Entry Pad */}
         <div className="w-full flex flex-col gap-4">
           <div className="terminal-card p-4">
             <h3 className="text-xs font-bold text-[var(--text-main)] border-b border-[var(--border-subtle)] pb-2 mb-3">
               Order Entry Pad
             </h3>
             
-            {/* Side Tabs */}
             <div className="flex bg-[var(--bg-root)] p-1 border border-[var(--border-subtle)] rounded mb-3">
               {(["BUY", "SELL", "SHORT", "COVER"] as const).map((t) => (
                 <button
@@ -341,7 +290,6 @@ export default function StockDetail() {
               ))}
             </div>
 
-            {/* Quick 1-Click "Instant Sell All Longs" Banner */}
             {longPosition && longPosition.quantity > 0 && (
               <div className="mb-3 p-2.5 bg-rose-500/10 border border-rose-500/30 rounded flex flex-col gap-1.5">
                 <div className="flex justify-between items-center text-[11px] font-mono">
@@ -360,7 +308,6 @@ export default function StockDetail() {
               </div>
             )}
 
-            {/* Quick 1-Click "Instant Cover All Shorts" Banner */}
             {shortPosition && shortPosition.quantity > 0 && (
               <div className="mb-3 p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded flex flex-col gap-1.5">
                 <div className="flex justify-between items-center text-[11px] font-mono">
@@ -380,7 +327,6 @@ export default function StockDetail() {
             )}
 
             <div className="space-y-4">
-              {/* Quantity Input with Symmetrical Max Long & Max Short Chips */}
               <div>
                 <div className="flex justify-between items-center text-xs text-[var(--text-muted)] font-mono mb-1">
                   <span>Order Quantity</span>
@@ -396,7 +342,6 @@ export default function StockDetail() {
                       </button>
                     ))}
 
-                    {/* Max Buy Chip */}
                     <button
                       type="button"
                       onClick={() => {
@@ -404,12 +349,10 @@ export default function StockDetail() {
                         setQuantity(String(Math.max(1, maxBuyQty)));
                       }}
                       className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 border border-blue-500/40 rounded text-[10px] font-bold"
-                      title="Set quantity to maximum buyable shares"
                     >
                       Max Buy ({maxBuyQty})
                     </button>
 
-                    {/* Max Short Chip */}
                     <button
                       type="button"
                       onClick={() => {
@@ -417,7 +360,6 @@ export default function StockDetail() {
                         setQuantity(String(Math.max(1, maxShortQty)));
                       }}
                       className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded text-[10px] font-bold"
-                      title="Set quantity to maximum shortable shares"
                     >
                       Max Short ({maxShortQty})
                     </button>
@@ -433,7 +375,6 @@ export default function StockDetail() {
                 />
               </div>
 
-              {/* Order Cost, 0.1% Tax & Proceeds */}
               <div className="p-3 bg-[var(--bg-root)] rounded border border-[var(--border-subtle)] space-y-1.5 text-xs font-mono">
                 <div className="flex justify-between">
                   <span className="text-[var(--text-muted)]">Gross Value:</span>
@@ -443,7 +384,7 @@ export default function StockDetail() {
                 </div>
 
                 <div className="flex justify-between text-amber-400">
-                  <span>0.1% Securities Transaction Tax (STT):</span>
+                  <span>0.1% STT Tax:</span>
                   <span>{side === "BUY" || side === "COVER" ? "+" : "-"}₹{estimatedTax.toFixed(2)}</span>
                 </div>
 
@@ -462,7 +403,6 @@ export default function StockDetail() {
                 </div>
               </div>
 
-              {/* Feedback Telemetry */}
               {result && (
                 <div className={`p-3 rounded text-xs font-mono flex flex-col gap-1 border ${
                   result.status === "completed"
@@ -490,7 +430,6 @@ export default function StockDetail() {
                 </div>
               )}
 
-              {/* Main Submit Button */}
               <button
                 onClick={handleAction}
                 disabled={loading || numQty <= 0}

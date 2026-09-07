@@ -125,6 +125,25 @@ export default function AdminDashboard() {
     } catch (e) { console.error("Failed to write admin log", e); }
   };
 
+  const handleChangePassword = async (uid: string) => {
+    const newPassword = window.prompt("Enter new password for this user (min 6 characters):");
+    if (!newPassword) return;
+    if (newPassword.length < 6) {
+      notify({ type: "alert", title: "Invalid Password", message: "Password must be at least 6 characters.", impact: "negative" });
+      return;
+    }
+    setProcessingAction(`password-${uid}`);
+    logAdminAction("CHANGE_USER_PASSWORD", { targetUserId: uid });
+    try {
+      await httpsCallable('adminChangePassword')({ uid, newPassword });
+      notify({ type: "alert", title: "Password Updated", message: `Password successfully changed for user.`, impact: "positive" });
+    } catch (err: any) {
+      notify({ type: "alert", title: "Error", message: err.message, impact: "negative" });
+    } finally {
+      setProcessingAction(null);
+    }
+  };
+
   const handleMarketStatus = async (status: string) => {
     setProcessingAction(`market-${status}`);
     logAdminAction("SET_MARKET_STATE", { state: status });
@@ -865,6 +884,15 @@ export default function AdminDashboard() {
                           >
                             {processingAction === `cash-${u.uid}` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : 'ADJUST CASH'}
                           </button>
+              
+                          <button 
+                            onClick={() => handleChangePassword(u.uid)} 
+                            disabled={processingAction === `password-${u.uid}`}
+                            className="px-2 py-1 bg-[#3b82f615] hover:bg-[#3b82f630] border border-[#3b82f650] text-[#3b82f6] rounded text-[10px] font-bold flex items-center justify-center w-20 transition-colors"
+                          >
+                            {processingAction === `password-${u.uid}` ? <div className="w-3 h-3 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" /> : 'PASSWORD'}
+                          </button>
+
                           <button 
                             onClick={() => handleToggleFreeze(u.uid, !u.isFrozen)} 
                             disabled={processingAction === `freeze-${u.uid}`}

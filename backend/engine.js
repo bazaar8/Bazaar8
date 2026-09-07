@@ -23,6 +23,7 @@ const io = new Server(server, {
   pingTimeout: 5000
 });
 
+// --- MONGOOSE SCHEMAS ---
 const UserSchema = new mongoose.Schema({
   uid: { type: String, unique: true, required: true, index: true },
   email: { type: String, unique: true, required: true },
@@ -134,6 +135,7 @@ const NewsEvent = mongoose.model("NewsEvent", NewsEventSchema);
 const SystemState = mongoose.model("SystemState", SystemStateSchema);
 const AdminLog = mongoose.model("AdminLog", AdminLogSchema);
 
+// In-memory runtime state
 let currentMarketStatus = "CLOSED";
 let cachedLivePrices = {};
 let cachedInfluences = {};
@@ -143,6 +145,8 @@ let lastTradeTax = 0;
 let cachedRankings = [];
 let tickCount = 0;
 let forceBasePriceReset = false;
+
+// 1. JWT CACHE FOR SUB-0.5s EXECUTION
 const authCache = new Map(); 
 
 mongoose.connect(MONGO_URI, { maxPoolSize: 20, serverSelectionTimeoutMS: 5000 }).then(async () => {
@@ -167,8 +171,10 @@ mongoose.connect(MONGO_URI, { maxPoolSize: 20, serverSelectionTimeoutMS: 5000 })
   startSimulationEngines();
 }).catch(err => console.error("MongoDB error:", err.message));
 
+// --- SIMULATION ENGINES ---
 function startSimulationEngines() {
-
+  
+  // 1. AUTO-IPO ENGINE
   setInterval(async () => {
     try {
       const now = Date.now();
@@ -273,6 +279,7 @@ function startSimulationEngines() {
     } catch (e) {}
   }, 3000);
 
+  // 2. LEADERBOARD ENGINE
   setInterval(async () => {
     try {
       const users = await User.find({ role: "student" }, "uid name email cashBalance startingBalance holdings").lean();
@@ -286,8 +293,14 @@ function startSimulationEngines() {
 
         (user.holdings || []).forEach(holding => {
           const currentPrice = cachedLivePrices[holding.ticker]?.price || holding.avgPrice;
-          if (holding.positionType === "long") longValue += holding.quantity * currentPrice;
-          else if (holding.positionType === "short") shortPnL += (holding.avgPrice - currentPrice) * holding.quantity;
+          if (holding.positionType === "long") {
+            longValue += holding.quantity * currentPrice;
+          } else if (holding.positionType === "short") {
+            // FIX: Restore blocked initial short margin + active PnL to total net worth
+            const initialMargin = holding.avgPrice * holding.quantity;
+            const activePnL = (holding.avgPrice - currentPrice) * holding.quantity;
+            shortPnL += (initialMargin + activePnL);
+          }
         });
 
         activeIpos.forEach(ipo => {
@@ -316,6 +329,7 @@ function startSimulationEngines() {
     } catch (e) {}
   }, 6000);
 
+  // 3. ULTRA-FAST MARKET SIMULATION (500ms Tick)
   let lastBasePriceReset = Date.now();
   const TICK_INTERVAL_MS = 500;
 
@@ -350,6 +364,7 @@ function startSimulationEngines() {
         lastBasePriceReset = now;
       }
 
+      // Generate Sector Correlation Bias
       const sectorBiases = {};
       Object.values(cachedLivePrices).forEach(stock => {
          const sector = stock.sector || "General";
@@ -426,6 +441,7 @@ function startSimulationEngines() {
   }, 15000);
 }
 
+// --- FAST MEMORY-CACHED AUTH MIDDLEWARE ---
 const authMiddleware = async (req, res, next) => {
   const token = req.headers.authorization?.replace("Bearer ", "");
   if (!token) return res.status(401).json({ error: { message: "Unauthenticated" } });
@@ -434,6 +450,7 @@ const authMiddleware = async (req, res, next) => {
     const now = Date.now();
     let cached = authCache.get(decoded.uid);
     
+    // Resolve from cache if verified within the last 15 seconds
     if (cached && (now - cached.ts < 15000)) {
       req.user = cached.user;
       return next();
@@ -465,6 +482,7 @@ const handleCallable = (handler) => async (req, res) => {
   }
 };
 
+// --- AUTH & USER ENDPOINTS ---
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body.data || req.body;
@@ -493,28 +511,6 @@ app.post('/api/register', handleCallable(async (data) => {
 
 app.get("/api/me", authMiddleware, async (req, res) => {
   const u = await User.findOne({ uid: req.user.uid }).lean();
-  res.json({ data: u });
-});
-
-app.post('/api/updateUserProfile', authMiddleware, handleCallable(async (data, context) => {
-  await User.updateOne({ uid: context.auth.uid }, { $set: data.updates });
-  authCache.delete(context.auth.uid);
-  return { success: true };
-}));
-
-app.post('/api/updatePassword', authMiddleware, handleCallable(async (data, context) => {
-  const hashed = await bcrypt.hash(data.newPassword, 10);
-  await User.updateOne({ uid: context.auth.uid }, { password: hashed });
-  return { success: true };
-}));
-
-app.post('/api/resetPassword', handleCallable(async (data) => {
-  return { success: true, message: "Password reset instructions generated." };
-}));
-
-app.get('/api/users/:uid', authMiddleware, async (req, res) => {
-  const u = await User.findOne({ uid: req.params.uid }, "-password").lean();
-  if (!u) return res.status(404).json({ error: { message: "User not found" } });
   res.json({ data: u });
 });
 
@@ -562,6 +558,7 @@ app.post("/api/wishlists/sync", authMiddleware, handleCallable(async (data, cont
   return { success: true };
 }));
 
+// --- CORE NON-BLOCKING TRADING ENGINE ---
 app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, context) => {
   const execStart = Date.now();
   if (!context.auth) throw new Error("User not logged in");
@@ -615,11 +612,12 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
       orderStatus = "completed";
     }
   } else if (action === "SHORT") {
+    // FIX: Requires 100% Margin Collateral, blocking buying power
     const marginRequired = qty * execPrice;
     taxDeducted = Math.round(marginRequired * 0.001 * 100) / 100;
     if (cashBalance < marginRequired + taxDeducted) { orderStatus = "rejected"; rejectReason = "Insufficient cash balance for margin requirement"; }
     else {
-      cashBalance -= taxDeducted;
+      cashBalance -= (marginRequired + taxDeducted);
       const existingIdx = user.holdings.findIndex(h => h.ticker === ticker && h.positionType === "short");
       const newQty = shortData.quantity + qty;
       const newAvg = ((shortData.quantity * shortData.avgPrice) + marginRequired) / newQty;
@@ -635,9 +633,12 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
       const shortPrice = shortData.avgPrice || execPrice;
       realizedPnL = Math.round(((shortPrice - execPrice) * qty - taxDeducted) * 100) / 100;
       pnlPct = shortPrice > 0 ? Number((((shortPrice - execPrice) / shortPrice) * 100).toFixed(2)) : 0;
-      if (cashBalance + realizedPnL < 0) { orderStatus = "rejected"; rejectReason = "Insufficient cash to absorb short trade loss"; }
+      const initialMargin = qty * shortPrice;
+      
+      // FIX: Unlock initial margin + realized PnL
+      if (cashBalance + initialMargin + realizedPnL < 0) { orderStatus = "rejected"; rejectReason = "Insufficient cash to absorb short trade loss"; }
       else {
-        cashBalance += realizedPnL;
+        cashBalance += (initialMargin + realizedPnL);
         if (shortData.quantity - qty === 0) user.holdings = user.holdings.filter(h => !(h.ticker === ticker && h.positionType === "short"));
         else user.holdings.find(h => h.ticker === ticker && h.positionType === "short").quantity -= qty;
         orderStatus = "completed";
@@ -655,7 +656,7 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
 
   const executionLatencyMs = Date.now() - execStart;
 
-  // Asynchronous write decoupled from HTTP response (Slashes 200ms of lag!)
+  // 2. ASYNC LEDGER WRITE (Decoupled from HTTP Response to drop execution time below 0.5s)
   Order.create({
     orderId: "ord_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
     uid, ticker, side: action, quantity: qty, priceAtExecution: execPrice, status: orderStatus, 
@@ -665,6 +666,7 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
   return { status: orderStatus, reason: rejectReason, executionPrice: execPrice, realizedPnL, pnlPct, taxDeducted, executionLatencyMs };
 }));
 
+// --- IPO BIDDING ---
 app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, context) => {
   if (!context.auth) throw new Error("User not logged in");
   const uid = context.auth.uid;
@@ -709,6 +711,14 @@ app.get('/api/admin/users', authMiddleware, verifyAdmin, async (req, res) => { r
 app.get('/api/admin/orders', authMiddleware, verifyAdmin, async (req, res) => { res.json({ data: await Order.find().sort({ timestamp: -1 }).limit(50).lean() }); });
 app.get("/api/adminLogs", authMiddleware, verifyAdmin, async (req, res) => { res.json({ data: await AdminLog.find().sort({ timestamp: -1 }).limit(100).lean() }); });
 
+app.post('/api/adminChangePassword', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const { uid, newPassword } = data;
+  if (!newPassword || newPassword.length < 6) throw new Error("Password must be at least 6 characters.");
+  const hashed = await bcrypt.hash(newPassword, 10);
+  await User.updateOne({ uid }, { password: hashed });
+  return { success: true };
+}));
+
 app.post('/api/adminAdjustCash', authMiddleware, verifyAdmin, handleCallable(async (data) => {
   await User.updateOne({ uid: data.uid }, { cashBalance: data.amount });
   io.emit(`userUpdate:${data.uid}`, { cashBalance: data.amount });
@@ -738,7 +748,7 @@ app.post('/api/adminForceStockPrice', authMiddleware, verifyAdmin, handleCallabl
 
 app.post('/api/adminToggleUserFreeze', authMiddleware, verifyAdmin, handleCallable(async (data) => {
   await User.updateOne({ uid: data.uid }, { isFrozen: data.isFrozen });
-  authCache.delete(data.uid); // Purge cache on admin override
+  authCache.delete(data.uid); 
   io.emit(`userUpdate:${data.uid}`, { isFrozen: data.isFrozen });
   return { success: true };
 }));
@@ -781,10 +791,6 @@ app.post('/api/adminImportUsers', authMiddleware, verifyAdmin, handleCallable(as
       });
     }
   }
-  return { success: true };
-}));
-
-app.post('/api/adminSendPasswordResets', authMiddleware, verifyAdmin, handleCallable(async (data) => {
   return { success: true };
 }));
 

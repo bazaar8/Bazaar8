@@ -39,11 +39,7 @@ const UserSchema = new mongoose.Schema({
     quantity: Number,
     avgPrice: Number
   }],
-  wishlists: [{
-    id: Number,
-    name: String,
-    tickers: [String]
-  }],
+  wishlists: [{ id: Number, name: String, tickers: [String] }],
   createdAt: { type: Number, default: Date.now }
 });
 
@@ -65,51 +61,31 @@ const OrderSchema = new mongoose.Schema({
 
 const IPOSchema = new mongoose.Schema({
   ipoId: { type: String, unique: true, index: true },
-  name: String,
-  ticker: String,
-  price: Number,
-  lotSize: Number,
-  totalLots: Number,
-  listingPremiumPct: Number,
-  sector: { type: String, default: "Upcoming" },
-  allotmentType: { type: String, default: "lottery" },
+  name: String, ticker: String, price: Number, lotSize: Number, totalLots: Number,
+  listingPremiumPct: Number, sector: { type: String, default: "Upcoming" },
   status: { type: String, default: "upcoming", index: true },
   totalSubscribedLots: { type: Number, default: 0 },
   totalSubscribedShares: { type: Number, default: 0 },
   subscriptionCount: { type: Number, default: 0 },
   subscriptionRate: { type: Number, default: 0 },
-  openTime: Number,
-  closeTime: Number,
-  listTime: Number,
-  triggerAllotment: Boolean,
-  triggerListing: Boolean,
-  allotmentCompletedAt: Number,
+  openTime: Number, closeTime: Number, listTime: Number,
+  triggerAllotment: Boolean, triggerListing: Boolean,
   subscriptions: [{
-    subId: String,
-    uid: String,
-    requestedShares: Number,
-    requestedLots: Number,
-    allocatedLots: { type: Number, default: 0 },
-    allocatedShares: { type: Number, default: 0 },
-    investedAmount: Number,
-    refundedAmount: { type: Number, default: 0 },
-    status: { type: String, default: "pending" },
-    timestamp: { type: Number, default: Date.now },
-    allotmentTimestamp: Number
+    subId: String, uid: String, requestedShares: Number, requestedLots: Number,
+    allocatedLots: { type: Number, default: 0 }, allocatedShares: { type: Number, default: 0 },
+    investedAmount: Number, refundedAmount: { type: Number, default: 0 },
+    status: { type: String, default: "pending" }
   }]
 });
 
 const NewsEventSchema = new mongoose.Schema({
   eventId: { type: String, unique: true, index: true },
-  headline: String,
-  stockImpacts: { type: Object, default: {} },
+  headline: String, stockImpacts: { type: Object, default: {} },
   durationMinutes: { type: Number, default: 15 },
   status: { type: String, default: "draft", index: true },
   startTime: { type: Number, default: 0 },
-  firedAt: { type: Number, default: 0 },
   createdAt: { type: Number, default: Date.now },
-  targetTickers: [String],
-  impactDirection: String
+  targetTickers: [String], impactDirection: String
 });
 
 const SystemStateSchema = new mongoose.Schema({
@@ -123,9 +99,7 @@ const SystemStateSchema = new mongoose.Schema({
 
 const AdminLogSchema = new mongoose.Schema({
   timestamp: { type: Number, default: Date.now, index: -1 },
-  adminEmail: String,
-  action: String,
-  details: Object
+  adminEmail: String, action: String, details: Object
 });
 
 const User = mongoose.model("User", UserSchema);
@@ -144,9 +118,8 @@ let totalTaxCollected = 0;
 let lastTradeTax = 0;
 let cachedRankings = [];
 let tickCount = 0;
-let forceBasePriceReset = false;
 
-// 1. JWT CACHE FOR SUB-0.5s EXECUTION
+// 1. FAST MEMORY-CACHED AUTH
 const authCache = new Map(); 
 
 mongoose.connect(MONGO_URI, { maxPoolSize: 20, serverSelectionTimeoutMS: 5000 }).then(async () => {
@@ -162,12 +135,8 @@ mongoose.connect(MONGO_URI, { maxPoolSize: 20, serverSelectionTimeoutMS: 5000 })
   const admin = await User.findOne({ role: "admin" });
   if (!admin) {
     const hashed = await bcrypt.hash("admin@123", 10);
-    await User.create({
-      uid: "admin_master", email: "admin@bazaar.com", password: hashed, name: "Master Admin", role: "admin"
-    });
-    console.log("Default Admin generated: admin@bazaar.com / admin@123");
+    await User.create({ uid: "admin_master", email: "admin@bazaar.com", password: hashed, name: "Master Admin", role: "admin" });
   }
-
   startSimulationEngines();
 }).catch(err => console.error("MongoDB error:", err.message));
 
@@ -182,12 +151,9 @@ function startSimulationEngines() {
 
       for (const ipo of ipos) {
         if (ipo.status === "upcoming" && ipo.openTime && now >= ipo.openTime) {
-          ipo.status = "open";
-          await ipo.save();
-          const evtId = "news_" + Date.now();
+          ipo.status = "open"; await ipo.save();
           await NewsEvent.create({
-            eventId: evtId,
-            headline: ` New IPO Open: ${ipo.ticker} (${ipo.name || ipo.ticker}) is now OPEN for bidding at ₹${ipo.price}!`,
+            eventId: "news_" + Date.now(), headline: ` New IPO Open: ${ipo.ticker} is now OPEN for bidding at ₹${ipo.price}!`,
             status: "active", startTime: now, createdAt: now, durationMinutes: 60, targetTickers: [ipo.ticker], impactDirection: "positive"
           });
           io.emit("newsUpdate", { type: "new", ipo: ipo.ticker });
@@ -200,12 +166,7 @@ function startSimulationEngines() {
           const lotSize = Number(ipo.lotSize) || 1;
           const pricePerShare = Number(ipo.price) || 0;
 
-          if (ipo.subscriptions.length === 0) {
-            ipo.status = "allotted";
-            ipo.triggerAllotment = false;
-            await ipo.save();
-            continue;
-          }
+          if (ipo.subscriptions.length === 0) { ipo.status = "allotted"; ipo.triggerAllotment = false; await ipo.save(); continue; }
 
           let lotteryPool = [];
           ipo.subscriptions.forEach((sub, index) => {
@@ -226,15 +187,11 @@ function startSimulationEngines() {
             const sub = ipo.subscriptions[i];
             const wonLots = winCounts[i] || 0;
             const allocatedShares = wonLots * lotSize;
-            const costBlocked = sub.investedAmount;
             const costUsed = allocatedShares * pricePerShare;
-            const refundAmount = Math.max(0, costBlocked - costUsed);
+            const refundAmount = Math.max(0, sub.investedAmount - costUsed);
 
-            sub.allocatedLots = wonLots;
-            sub.allocatedShares = allocatedShares;
-            sub.status = wonLots > 0 ? "won" : "lost";
-            sub.refundedAmount = refundAmount;
-            sub.allotmentTimestamp = now;
+            sub.allocatedLots = wonLots; sub.allocatedShares = allocatedShares;
+            sub.status = wonLots > 0 ? "won" : "lost"; sub.refundedAmount = refundAmount;
 
             if (refundAmount > 0 || allocatedShares > 0) {
               const u = await User.findOne({ uid: sub.uid });
@@ -251,10 +208,7 @@ function startSimulationEngines() {
             }
           }
 
-          ipo.status = "allotted";
-          ipo.triggerAllotment = false;
-          ipo.allotmentCompletedAt = now;
-          await ipo.save();
+          ipo.status = "allotted"; ipo.triggerAllotment = false; await ipo.save();
           io.emit("newsUpdate", { type: "allotted", ipo: ipo.ticker });
         }
 
@@ -262,14 +216,11 @@ function startSimulationEngines() {
           const rawListingPrice = Number(ipo.price) * (1 + ((Number(ipo.listingPremiumPct) || 0) / 100));
           const listingPrice = Math.max(0.01, Number(rawListingPrice.toFixed(2))); 
 
-          ipo.status = "listed";
-          ipo.triggerListing = false;
-          await ipo.save();
+          ipo.status = "listed"; ipo.triggerListing = false; await ipo.save();
 
           cachedLivePrices[ipo.ticker] = {
             ticker: ipo.ticker, name: ipo.name || ipo.ticker, sector: ipo.sector || "IPO",
-            price: listingPrice, basePrice: listingPrice, engineBasePrice: listingPrice,
-            high: listingPrice, low: listingPrice, volatility: 0.008, isIPO: true, timestamp: now
+            price: listingPrice, basePrice: listingPrice, high: listingPrice, low: listingPrice, volatility: 0.008, isIPO: true, timestamp: now
           };
 
           io.emit("newsUpdate", { type: "listed", ipo: ipo.ticker });
@@ -287,16 +238,13 @@ function startSimulationEngines() {
       const leaderboard = [];
 
       for (const user of users) {
-        let longValue = 0;
-        let shortPnL = 0;
-        let blockedIpoFunds = 0;
+        let longValue = 0; let shortPnL = 0; let blockedIpoFunds = 0;
 
         (user.holdings || []).forEach(holding => {
           const currentPrice = cachedLivePrices[holding.ticker]?.price || holding.avgPrice;
           if (holding.positionType === "long") {
             longValue += holding.quantity * currentPrice;
           } else if (holding.positionType === "short") {
-            // FIX: Restore blocked initial short margin + active PnL to total net worth
             const initialMargin = holding.avgPrice * holding.quantity;
             const activePnL = (holding.avgPrice - currentPrice) * holding.quantity;
             shortPnL += (initialMargin + activePnL);
@@ -306,8 +254,7 @@ function startSimulationEngines() {
         activeIpos.forEach(ipo => {
           const mySub = (ipo.subscriptions || []).find(s => s.uid === user.uid);
           if (mySub && !['won', 'lost', 'success', 'refunded'].includes(mySub.status)) {
-            const price = Number(ipo.price) || 0;
-            const lotSize = Number(ipo.lotSize) || 1;
+            const price = Number(ipo.price) || 0; const lotSize = Number(ipo.lotSize) || 1;
             const reqLots = Number(mySub.requestedLots) || Math.max(1, Math.floor((Number(mySub.requestedShares) || 1) / lotSize));
             blockedIpoFunds += (reqLots * lotSize * price);
           }
@@ -329,8 +276,7 @@ function startSimulationEngines() {
     } catch (e) {}
   }, 6000);
 
-  // 3. ULTRA-FAST MARKET SIMULATION (500ms Tick)
-  let lastBasePriceReset = Date.now();
+  // 3. ULTRA-FAST MARKET SIMULATION (500ms Tick with Mean Reversion & 10% Bounds)
   const TICK_INTERVAL_MS = 500;
 
   setInterval(async () => {
@@ -344,40 +290,23 @@ function startSimulationEngines() {
         if (inf.status === "active") {
           const elapsedMs = now - Number(inf.startTime || 0);
           const durationMs = (Number(inf.durationMinutes) || 15) * 60 * 1000;
-          if (elapsedMs > durationMs) {
-            finishedEvents.add(eventId);
-            if (inf.impacts) {
-              for (const [t, pct] of Object.entries(inf.impacts)) {
-                if (cachedLivePrices[t]) {
-                  cachedLivePrices[t].engineBasePrice = (cachedLivePrices[t].engineBasePrice || cachedLivePrices[t].price) * (1 + (pct / 100));
-                }
-              }
-            }
-          }
+          if (elapsedMs > durationMs) finishedEvents.add(eventId);
         }
       }
 
-      let shouldResetBase = false;
-      if (now - lastBasePriceReset >= 180000 || forceBasePriceReset) {
-        shouldResetBase = true;
-        forceBasePriceReset = false;
-        lastBasePriceReset = now;
-      }
-
-      // Generate Sector Correlation Bias
+      // Generate Shared Sector Biases per tick
       const sectorBiases = {};
       Object.values(cachedLivePrices).forEach(stock => {
          const sector = stock.sector || "General";
-         if (sectorBiases[sector] === undefined) {
-             sectorBiases[sector] = (Math.random() - 0.5); 
-         }
+         if (sectorBiases[sector] === undefined) sectorBiases[sector] = (Math.random() - 0.5); 
       });
 
       for (const ticker of Object.keys(cachedLivePrices)) {
         const stockData = cachedLivePrices[ticker];
-        let engineBase = stockData.engineBasePrice || stockData.basePrice || stockData.price;
-        if (shouldResetBase) engineBase = stockData.price;
-
+        
+        // The foundational anchor! Never drifts automatically.
+        const fundamentalBase = Number(stockData.basePrice) || Number(stockData.price);
+        
         let eventBias = 0, currentTargetMultiplier = 1;
         let hasActiveNews = false;
 
@@ -395,24 +324,36 @@ function startSimulationEngines() {
           }
         }
 
-        const dynamicBasePrice = engineBase * currentTargetMultiplier;
+        const dynamicBasePrice = fundamentalBase * currentTargetMultiplier;
+        
+        // Pseudo Market Logic: Mean Reversion to dynamic anchor
+        const deviation = (stockData.price - dynamicBasePrice) / fundamentalBase;
+        const meanReversion = -deviation * 0.002; // Soft elastic pull towards center
+        
+        // 70% Sector Trend + 30% Individual Noise
         const sector = stockData.sector || "General";
         const individualRandomness = (Math.random() - 0.5);
         const blendedRandomness = (sectorBiases[sector] * 0.7) + (individualRandomness * 0.3);
+        const randomStep = blendedRandomness * (stockData.volatility || 0.005);
 
-        let newPrice = stockData.price * (1 + Math.max(-0.02, Math.min(0.02, blendedRandomness * (stockData.volatility || 0.005))) + eventBias);
+        let pctChange = randomStep + eventBias + meanReversion;
+        let newPrice = stockData.price * (1 + pctChange);
 
+        // Strict News Bounds (Clamp tightly during news events)
         if (hasActiveNews) {
-          newPrice = Math.max(0.01, Math.min(dynamicBasePrice * 1.005, Math.max(dynamicBasePrice * 0.995, newPrice)));
-        } else {
-          newPrice = Math.max(0.01, Math.min(dynamicBasePrice * 1.03, Math.max(dynamicBasePrice * 0.97, newPrice)));
+          newPrice = Math.max(dynamicBasePrice * 0.995, Math.min(dynamicBasePrice * 1.005, newPrice));
         }
+
+        // ABSOLUTE 10% CIRCUIT LIMITER (Prevents 50% drift over 7 days)
+        const absoluteMin = Math.max(0.01, fundamentalBase * 0.90);
+        const absoluteMax = fundamentalBase * 1.10;
+        newPrice = Math.max(absoluteMin, Math.min(absoluteMax, newPrice));
 
         const currHigh = Math.max(Number(stockData.high || newPrice), Number(newPrice));
         const currLow = Math.min(Number(stockData.low || newPrice), Number(newPrice));
 
         cachedLivePrices[ticker] = {
-          ...stockData, engineBasePrice: engineBase, price: Number(newPrice.toFixed(2)),
+          ...stockData, price: Number(newPrice.toFixed(2)),
           high: Number(currHigh.toFixed(2)), low: Number(currLow.toFixed(2)), timestamp: now
         };
 
@@ -612,7 +553,6 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
       orderStatus = "completed";
     }
   } else if (action === "SHORT") {
-    // FIX: Requires 100% Margin Collateral, blocking buying power
     const marginRequired = qty * execPrice;
     taxDeducted = Math.round(marginRequired * 0.001 * 100) / 100;
     if (cashBalance < marginRequired + taxDeducted) { orderStatus = "rejected"; rejectReason = "Insufficient cash balance for margin requirement"; }
@@ -635,7 +575,6 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
       pnlPct = shortPrice > 0 ? Number((((shortPrice - execPrice) / shortPrice) * 100).toFixed(2)) : 0;
       const initialMargin = qty * shortPrice;
       
-      // FIX: Unlock initial margin + realized PnL
       if (cashBalance + initialMargin + realizedPnL < 0) { orderStatus = "rejected"; rejectReason = "Insufficient cash to absorb short trade loss"; }
       else {
         cashBalance += (initialMargin + realizedPnL);
@@ -736,8 +675,7 @@ app.post('/api/adminForceStockPrice', authMiddleware, verifyAdmin, handleCallabl
   const targetPrice = Number(data.price);
   if (cachedLivePrices[ticker] && !isNaN(targetPrice)) {
     cachedLivePrices[ticker].price = targetPrice;
-    cachedLivePrices[ticker].engineBasePrice = targetPrice;
-    cachedLivePrices[ticker].basePrice = targetPrice;
+    cachedLivePrices[ticker].basePrice = targetPrice; 
     cachedLivePrices[ticker].high = Math.max(cachedLivePrices[ticker].high || targetPrice, targetPrice);
     cachedLivePrices[ticker].low = Math.min(cachedLivePrices[ticker].low || targetPrice, targetPrice);
     cachedLivePrices[ticker].timestamp = Date.now();
@@ -866,8 +804,7 @@ app.post('/api/listIPO', authMiddleware, verifyAdmin, handleCallable(async (data
 
   cachedLivePrices[ipo.ticker] = {
     ticker: ipo.ticker, name: ipo.name || ipo.ticker, sector: ipo.sector || "IPO",
-    price: listingPrice, basePrice: listingPrice, engineBasePrice: listingPrice,
-    high: listingPrice, low: listingPrice, volatility: 0.008, isIPO: true, timestamp: now
+    price: listingPrice, basePrice: listingPrice, high: listingPrice, low: listingPrice, volatility: 0.008, isIPO: true, timestamp: now
   };
 
   await NewsEvent.create({
@@ -903,7 +840,6 @@ app.post('/api/adminReleaseNewsEvent', authMiddleware, verifyAdmin, handleCallab
     id: targetId, headline: data.event?.headline || "Breaking Market News",
     impacts: data.event?.stockImpacts || {}, durationMinutes: data.durationMinutes || 15, startTime: now, status: "active"
   };
-  forceBasePriceReset = true;
   io.emit("newsUpdate", { type: "breaking", headline: data.event?.headline });
   return { success: true };
 }));
@@ -921,13 +857,12 @@ app.post('/api/adminDeleteSingleNews', authMiddleware, verifyAdmin, handleCallab
   const query = mongoose.isValidObjectId(targetId) ? { $or: [{ eventId: targetId }, { _id: targetId }] } : { eventId: targetId };
   await NewsEvent.deleteOne(query);
   delete cachedInfluences[targetId];
-  forceBasePriceReset = true;
   return { success: true };
 }));
 
 app.post('/api/adminDeleteAllNews', authMiddleware, verifyAdmin, handleCallable(async () => {
   await NewsEvent.deleteMany({});
-  cachedInfluences = {}; forceBasePriceReset = true;
+  cachedInfluences = {}; 
   return { success: true };
 }));
 
@@ -937,7 +872,7 @@ app.post('/api/adminTriggerNextNews', authMiddleware, verifyAdmin, handleCallabl
   const now = Date.now();
   event.status = "active"; event.startTime = now; event.firedAt = now; await event.save();
   cachedInfluences[event.eventId] = { id: event.eventId, headline: event.headline, impacts: event.stockImpacts || {}, durationMinutes: event.durationMinutes || 15, startTime: now, status: "active" };
-  forceBasePriceReset = true; io.emit("newsUpdate", { type: "breaking", headline: event.headline });
+  io.emit("newsUpdate", { type: "breaking", headline: event.headline });
   return { success: true, headline: event.headline };
 }));
 
@@ -949,7 +884,7 @@ app.post('/api/adminTriggerAllNews', authMiddleware, verifyAdmin, handleCallable
     event.status = "active"; event.startTime = now; event.firedAt = now; await event.save();
     cachedInfluences[event.eventId] = { id: event.eventId, headline: event.headline, impacts: event.stockImpacts || {}, durationMinutes: event.durationMinutes || 15, startTime: now, status: "active" };
   }
-  forceBasePriceReset = true; io.emit("newsUpdate", { type: "bulk_breaking", count: drafts.length });
+  io.emit("newsUpdate", { type: "bulk_breaking", count: drafts.length });
   return { success: true, count: drafts.length };
 }));
 

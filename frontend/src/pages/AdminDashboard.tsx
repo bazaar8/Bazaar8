@@ -7,7 +7,7 @@ import { useNotifications } from "../context/NotificationContext";
 import { 
   LayoutDashboard, Users, Newspaper, 
   Sparkles, Power, Pause, Play, ShieldAlert, LogOut,
-  Plus, Send, CheckCircle, Upload, Download, X, Clock, TrendingUp, Mail, BarChart2, Sun, Moon, Sliders, Coins, Edit, Trash2, Zap, Radio
+  Plus, Send, CheckCircle, Upload, Download, X, Clock, TrendingUp, Mail, BarChart2, Sun, Moon, Sliders, Coins, Edit, Trash2, Zap, Radio, Search
 } from "lucide-react";
 import { 
   importNewsEvents, 
@@ -26,12 +26,17 @@ type Tab = 'dashboard' | 'market' | 'participants' | 'stocks' | 'logs' | 'news' 
 export default function AdminDashboard() {
   const { logoutUser, profile } = useAuth();
   const { isDark, toggleTheme } = useTheme(); 
-  const { notify } = useNotifications(); // <-- Initialize Notifications
+  const { notify } = useNotifications();
   
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [forceTicker, setForceTicker] = useState("");
   const [forcePrice, setForcePrice] = useState("");
   
+  // Search filter states
+  const [userSearchQuery, setUserSearchQuery] = useState("");
+  const [stockSearchQuery, setStockSearchQuery] = useState("");
+  const [newsSearchQuery, setNewsSearchQuery] = useState("");
+
   const [csvType, setCsvType] = useState<"news" | "users" | "stocks" | null>(null);
   const [csvText, setCsvText] = useState("");
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
@@ -46,7 +51,7 @@ export default function AdminDashboard() {
 
   const [ipoName, setIpoName] = useState("");
   const [ipoTicker, setIpoTicker] = useState("");
-  const [ipoSector, setIpoSector] = useState(""); // <-- Added Sector State
+  const [ipoSector, setIpoSector] = useState("");
   const [ipoPrice, setIpoPrice] = useState("");
   const [ipoLotSize, setIpoLotSize] = useState(""); 
   const [ipoTotalLots, setIpoTotalLots] = useState(""); 
@@ -541,7 +546,7 @@ export default function AdminDashboard() {
       await httpsCallable('adminCreateIPO')({
         name: ipoName, 
         ticker: ipoTicker.toUpperCase(), 
-        sector: ipoSector || "Upcoming", // <-- Pass Sector to backend
+        sector: ipoSector || "Upcoming",
         price: parseFloat(ipoPrice) || 0, 
         lotSize: parseInt(ipoLotSize, 10) || 1,           
         totalLots: parseInt(ipoTotalLots, 10) || 1,       
@@ -592,6 +597,38 @@ export default function AdminDashboard() {
     }
   };
 
+  // Filtered queries for search
+  const filteredUsers = users.filter((u) => {
+    if (!userSearchQuery.trim()) return true;
+    const q = userSearchQuery.toLowerCase();
+    return (
+      (u.email && u.email.toLowerCase().includes(q)) ||
+      (u.name && u.name.toLowerCase().includes(q)) ||
+      (u.uid && u.uid.toLowerCase().includes(q)) ||
+      (u.role && u.role.toLowerCase().includes(q))
+    );
+  });
+
+  const filteredStocks = Object.entries(prices).filter(([ticker, data]: [string, any]) => {
+    if (!stockSearchQuery.trim()) return true;
+    const q = stockSearchQuery.toLowerCase();
+    return (
+      ticker.toLowerCase().includes(q) ||
+      (data?.name && data.name.toLowerCase().includes(q)) ||
+      (data?.sector && data.sector.toLowerCase().includes(q))
+    );
+  });
+
+  const filteredNews = adminEvents.filter((evt) => {
+    if (!newsSearchQuery.trim()) return true;
+    const q = newsSearchQuery.toLowerCase();
+    const headlineMatch = evt.headline?.toLowerCase().includes(q);
+    const statusMatch = evt.status?.toLowerCase().includes(q);
+    const impactsMatch = Object.keys(evt.stockImpacts || {}).some((t) => t.toLowerCase().includes(q));
+    const tickersMatch = (evt.targetTickers || []).some((t: string) => t.toLowerCase().includes(q));
+    return headlineMatch || statusMatch || impactsMatch || tickersMatch;
+  });
+
   const navItems = [
     { id: 'dashboard', label: 'SYSTEM', icon: LayoutDashboard },
     { id: 'market', label: 'MARKET', icon: Sliders },
@@ -629,7 +666,6 @@ export default function AdminDashboard() {
           </div>
         </div>
         
-        {/* Horizontal scrollable navigation on mobile, vertical sidebar on desktop */}
         <nav className="flex flex-row md:flex-col overflow-x-auto md:overflow-y-auto py-2 md:py-3 px-2 md:px-0 gap-1 md:gap-0 scrollbar-none flex-1">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -783,15 +819,43 @@ export default function AdminDashboard() {
 
           {activeTab === 'participants' && (
             <div className="space-y-6">
-              <div className="border-b border-[var(--border-subtle)] pb-3 flex justify-between items-center">
-                <h1 className="text-sm font-bold uppercase tracking-widest text-[var(--text-main)]">Traders Management</h1>
-                <button 
-                  onClick={handleSendPasswordResets} 
-                  disabled={processingAction === 'emails'}
-                  className="px-4 py-2 bg-[#3b82f6] hover:opacity-90 disabled:opacity-50 text-white text-[11px] font-bold uppercase rounded flex items-center gap-2 transition-opacity"
-                >
-                  {processingAction === 'emails' ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Send Reset Emails to All
-                </button>
+              <div className="border-b border-[var(--border-subtle)] pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <h1 className="text-sm font-bold uppercase tracking-widest text-[var(--text-main)]">Traders Management</h1>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-muted)]">
+                    {filteredUsers.length} / {users.length} Traders
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* User Search Input */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-[var(--text-muted)]" />
+                    <input
+                      type="text"
+                      placeholder="Search email, name, role..."
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      className="w-full pl-8 pr-7 py-1.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-xs font-mono text-[var(--text-main)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[#3b82f6]"
+                    />
+                    {userSearchQuery && (
+                      <button 
+                        onClick={() => setUserSearchQuery("")}
+                        className="absolute right-2 top-2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+
+                  <button 
+                    onClick={handleSendPasswordResets} 
+                    disabled={processingAction === 'emails'}
+                    className="px-3 py-1.5 bg-[#3b82f6] hover:opacity-90 disabled:opacity-50 text-white text-[11px] font-bold uppercase rounded flex items-center gap-2 transition-opacity"
+                  >
+                    {processingAction === 'emails' ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Send Reset Emails
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -866,43 +930,54 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {users.map(u => (
-                      <tr key={u.uid} className="hover:bg-[var(--bg-root)] transition-colors">
-                        <td className="p-3 text-[var(--text-main)]">{u.email}</td>
-                        <td className="p-3 text-[var(--text-muted)]">{u.role}</td>
-                        <td className="p-3 text-right text-[var(--text-main)]">₹{Number(u.cashBalance || 0).toLocaleString()}</td>
-                        <td className="p-3 text-right">
-                          <span className={`px-2 py-1 rounded text-[9px] font-bold ${u.isFrozen ? 'bg-[#f2364515] text-[var(--down-color)]' : 'bg-[#08998115] text-[var(--up-color)]'}`}>
-                            {u.isFrozen ? 'FROZEN' : 'ACTIVE'}
-                          </span>
-                        </td>
-                        <td className="p-3 flex justify-end gap-2">
-                          <button 
-                            onClick={() => handleAdjustCash(u.uid, u.cashBalance || 0)} 
-                            disabled={processingAction === `cash-${u.uid}`}
-                            className="px-2 py-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] text-[var(--text-main)] rounded text-[10px] font-bold flex items-center justify-center w-24 transition-colors"
-                          >
-                            {processingAction === `cash-${u.uid}` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : 'ADJUST CASH'}
-                          </button>
-              
-                          <button 
-                            onClick={() => handleChangePassword(u.uid)} 
-                            disabled={processingAction === `password-${u.uid}`}
-                            className="px-2 py-1 bg-[#3b82f615] hover:bg-[#3b82f630] border border-[#3b82f650] text-[#3b82f6] rounded text-[10px] font-bold flex items-center justify-center w-20 transition-colors"
-                          >
-                            {processingAction === `password-${u.uid}` ? <div className="w-3 h-3 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" /> : 'PASSWORD'}
-                          </button>
-
-                          <button 
-                            onClick={() => handleToggleFreeze(u.uid, !u.isFrozen)} 
-                            disabled={processingAction === `freeze-${u.uid}`}
-                            className={`px-2 py-1 disabled:opacity-50 rounded text-[10px] font-bold flex items-center justify-center w-20 transition-opacity ${u.isFrozen ? 'bg-[var(--text-muted)] text-white hover:opacity-90' : 'bg-[var(--down-color)] text-white hover:opacity-90'}`}
-                          >
-                            {processingAction === `freeze-${u.uid}` ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : u.isFrozen ? 'UNFREEZE' : 'FREEZE'}
-                          </button>
+                    {filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-[var(--text-muted)]">
+                          No traders found matching "{userSearchQuery}"
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      filteredUsers.map(u => (
+                        <tr key={u.uid} className="hover:bg-[var(--bg-root)] transition-colors">
+                          <td className="p-3 text-[var(--text-main)]">
+                            <div className="font-bold">{u.email}</div>
+                            {u.name && <div className="text-[10px] text-[var(--text-muted)]">{u.name}</div>}
+                          </td>
+                          <td className="p-3 text-[var(--text-muted)]">{u.role}</td>
+                          <td className="p-3 text-right text-[var(--text-main)]">₹{Number(u.cashBalance || 0).toLocaleString()}</td>
+                          <td className="p-3 text-right">
+                            <span className={`px-2 py-1 rounded text-[9px] font-bold ${u.isFrozen ? 'bg-[#f2364515] text-[var(--down-color)]' : 'bg-[#08998115] text-[var(--up-color)]'}`}>
+                              {u.isFrozen ? 'FROZEN' : 'ACTIVE'}
+                            </span>
+                          </td>
+                          <td className="p-3 flex justify-end gap-2">
+                            <button 
+                              onClick={() => handleAdjustCash(u.uid, u.cashBalance || 0)} 
+                              disabled={processingAction === `cash-${u.uid}`}
+                              className="px-2 py-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] text-[var(--text-main)] rounded text-[10px] font-bold flex items-center justify-center w-24 transition-colors"
+                            >
+                              {processingAction === `cash-${u.uid}` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : 'ADJUST CASH'}
+                            </button>
+                
+                            <button 
+                              onClick={() => handleChangePassword(u.uid)} 
+                              disabled={processingAction === `password-${u.uid}`}
+                              className="px-2 py-1 bg-[#3b82f615] hover:bg-[#3b82f630] border border-[#3b82f650] text-[#3b82f6] rounded text-[10px] font-bold flex items-center justify-center w-20 transition-colors"
+                            >
+                              {processingAction === `password-${u.uid}` ? <div className="w-3 h-3 border-2 border-[#3b82f6] border-t-transparent rounded-full animate-spin" /> : 'PASSWORD'}
+                            </button>
+
+                            <button 
+                              onClick={() => handleToggleFreeze(u.uid, !u.isFrozen)} 
+                              disabled={processingAction === `freeze-${u.uid}`}
+                              className={`px-2 py-1 disabled:opacity-50 rounded text-[10px] font-bold flex items-center justify-center w-20 transition-opacity ${u.isFrozen ? 'bg-[var(--text-muted)] text-white hover:opacity-90' : 'bg-[var(--down-color)] text-white hover:opacity-90'}`}
+                            >
+                              {processingAction === `freeze-${u.uid}` ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : u.isFrozen ? 'UNFREEZE' : 'FREEZE'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -911,8 +986,33 @@ export default function AdminDashboard() {
 
           {activeTab === 'stocks' && (
             <div className="space-y-6">
-              <div className="border-b border-[var(--border-subtle)] pb-3">
-                <h1 className="text-sm font-bold uppercase tracking-widest text-[var(--text-main)]">Stock Directory Importer</h1>
+              <div className="border-b border-[var(--border-subtle)] pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <h1 className="text-sm font-bold uppercase tracking-widest text-[var(--text-main)]">Stock Directory</h1>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-muted)]">
+                    {filteredStocks.length} / {Object.keys(prices).length} Stocks
+                  </span>
+                </div>
+
+                {/* Stock Search Input */}
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-[var(--text-muted)]" />
+                  <input
+                    type="text"
+                    placeholder="Search ticker, name, sector..."
+                    value={stockSearchQuery}
+                    onChange={(e) => setStockSearchQuery(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-xs font-mono text-[var(--text-main)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--up-color)]"
+                  />
+                  {stockSearchQuery && (
+                    <button 
+                      onClick={() => setStockSearchQuery("")}
+                      className="absolute right-2 top-2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="terminal-card p-5 space-y-3">
@@ -985,30 +1085,41 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border-subtle)]">
-                    {Object.entries(prices).map(([ticker, data]: [string, any]) => (
-                      <tr key={ticker} className="hover:bg-[var(--bg-root)] transition-colors">
-                        <td className="p-3 text-[var(--text-main)] font-bold">{ticker}</td>
-                        <td className="p-3 text-[var(--text-muted)]">{data.sector || 'General'}</td>
-                        <td className="p-3 text-right text-[var(--text-muted)]">{Number(data.basePrice || data.price).toFixed(2)}</td>
-                        <td className="p-3 text-right text-[#3b82f6] font-bold">{Number(data.price).toFixed(2)}</td>
-                        <td className="p-3 flex justify-end gap-2">
-                          <button 
-                            onClick={() => handleEditStock(ticker, data)} 
-                            disabled={processingAction === `edit-${ticker}`}
-                            className="px-2 py-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] text-[var(--text-main)] rounded text-[10px] font-bold flex items-center justify-center w-14 transition-colors"
-                          >
-                            {processingAction === `edit-${ticker}` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : 'EDIT'}
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteStock(ticker)} 
-                            disabled={processingAction === `delete-${ticker}`}
-                            className="px-2 py-1 bg-[#f2364515] hover:opacity-80 border border-[var(--down-color)] disabled:opacity-50 text-[var(--down-color)] rounded text-[10px] font-bold flex items-center justify-center w-16 transition-opacity"
-                          >
-                            {processingAction === `delete-${ticker}` ? <div className="w-3 h-3 border-2 border-[var(--down-color)] border-t-transparent rounded-full animate-spin" /> : 'DELETE'}
-                          </button>
+                    {filteredStocks.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-[var(--text-muted)]">
+                          No stocks found matching "{stockSearchQuery}"
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      filteredStocks.map(([ticker, data]: [string, any]) => (
+                        <tr key={ticker} className="hover:bg-[var(--bg-root)] transition-colors">
+                          <td className="p-3 text-[var(--text-main)]">
+                            <span className="font-bold">{ticker}</span>
+                            {data.name && data.name !== ticker && <span className="block text-[10px] text-[var(--text-muted)]">{data.name}</span>}
+                          </td>
+                          <td className="p-3 text-[var(--text-muted)]">{data.sector || 'General'}</td>
+                          <td className="p-3 text-right text-[var(--text-muted)]">{Number(data.basePrice || data.price).toFixed(2)}</td>
+                          <td className="p-3 text-right text-[#3b82f6] font-bold">{Number(data.price).toFixed(2)}</td>
+                          <td className="p-3 flex justify-end gap-2">
+                            <button 
+                              onClick={() => handleEditStock(ticker, data)} 
+                              disabled={processingAction === `edit-${ticker}`}
+                              className="px-2 py-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] text-[var(--text-main)] rounded text-[10px] font-bold flex items-center justify-center w-14 transition-colors"
+                            >
+                              {processingAction === `edit-${ticker}` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : 'EDIT'}
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteStock(ticker)} 
+                              disabled={processingAction === `delete-${ticker}`}
+                              className="px-2 py-1 bg-[#f2364515] hover:opacity-80 border border-[var(--down-color)] disabled:opacity-50 text-[var(--down-color)] rounded text-[10px] font-bold flex items-center justify-center w-16 transition-opacity"
+                            >
+                              {processingAction === `delete-${ticker}` ? <div className="w-3 h-3 border-2 border-[var(--down-color)] border-t-transparent rounded-full animate-spin" /> : 'DELETE'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1350,15 +1461,35 @@ export default function AdminDashboard() {
                       <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)] flex items-center gap-2">
                         <span>Event Queue & Live Wire</span>
                         <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-amber-400/20 text-amber-400 border border-amber-400/30">
-                          {adminEvents.filter(e => e.status === "draft").length} Drafts
+                          {filteredNews.filter(e => e.status === "draft").length} Drafts
                         </span>
                         <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                          {adminEvents.filter(e => e.status === "active").length} Active
+                          {filteredNews.filter(e => e.status === "active").length} Active
                         </span>
                       </h2>
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap">
+                      {/* News Search Input */}
+                      <div className="relative w-full sm:w-48">
+                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-2 text-[var(--text-muted)]" />
+                        <input
+                          type="text"
+                          placeholder="Filter news..."
+                          value={newsSearchQuery}
+                          onChange={(e) => setNewsSearchQuery(e.target.value)}
+                          className="w-full pl-7 pr-6 py-1 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded text-xs font-mono text-[var(--text-main)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[#3b82f6]"
+                        />
+                        {newsSearchQuery && (
+                          <button 
+                            onClick={() => setNewsSearchQuery("")}
+                            className="absolute right-2 top-1.5 text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+
                       <button
                         type="button"
                         onClick={handleTriggerNextNews}
@@ -1410,19 +1541,19 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                   
-                  {adminEvents.length === 0 ? (
+                  {filteredNews.length === 0 ? (
                     <div className="p-8 flex flex-col items-center justify-center text-[var(--text-muted)] py-16">
                       <Newspaper className="w-10 h-10 mb-2 opacity-30" />
                       <p className="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                        Event Queue is Empty
+                        {newsSearchQuery ? `No news matching "${newsSearchQuery}"` : "Event Queue is Empty"}
                       </p>
                       <p className="text-[10px] text-[var(--text-muted)] font-mono mt-1 text-center max-w-sm">
-                        Use the single composer on the left or upload a bulk CSV to add draft news into the queue.
+                        {newsSearchQuery ? "Try searching for a different keyword or symbol." : "Use the single composer on the left or upload a bulk CSV to add draft news into the queue."}
                       </p>
                     </div>
                   ) : (
                     <div className="p-4 space-y-3 max-h-[600px] overflow-y-auto">
-                      {adminEvents.map((evt, idx) => {
+                      {filteredNews.map((evt, idx) => {
                         const isDraft = evt.status === "draft";
                         const isActive = evt.status === "active";
 
@@ -1558,7 +1689,6 @@ export default function AdminDashboard() {
                 <div className="xl:col-span-1 terminal-card p-5 space-y-4 h-fit">
                   <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--text-main)] border-b border-[var(--border-subtle)] pb-2">Schedule Offering</h2>
                   <div className="space-y-3">
-                    {/* UPDATED IPO GRID TO INCLUDE SECTOR */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <div className="col-span-1 sm:col-span-1">
                         <label className="text-[10px] font-bold text-[var(--text-muted)] uppercase">Company Name</label>

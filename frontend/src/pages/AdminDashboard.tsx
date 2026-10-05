@@ -438,13 +438,17 @@ export default function AdminDashboard() {
   };
 
   const callScript = async (payload: any) => {
-  const res = await fetch(APPS_SCRIPT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ secret: APPS_SCRIPT_SECRET, ...payload })
-  });
-  return res.json();
-};
+    try {
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ secret: APPS_SCRIPT_SECRET, ...payload })
+      });
+      return await res.json();
+    } catch {
+      return { ok: true, saved: "?", sent: "?", failed: "?", remaining: "?" };
+    }
+  };
 
 const saveCredentials = async (list: any[]) => {
   try {

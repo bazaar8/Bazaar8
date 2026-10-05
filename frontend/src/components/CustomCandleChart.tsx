@@ -102,7 +102,7 @@ export default function CustomCandleChart({
     const fetchHistory = async () => {
       try {
         const token = localStorage.getItem("bazaar_jwt_token");
-        const res = await fetch(`${API_URL}/history/${ticker}`, {
+        const res = await fetch(`${API_URL}/history/${ticker}?limit=7200`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         const json = await res.json();

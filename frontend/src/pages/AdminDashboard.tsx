@@ -23,6 +23,28 @@ import { STOCKS_CATALOG } from "../data/stocksData";
 
 type Tab = 'dashboard' | 'market' | 'participants' | 'stocks' | 'logs' | 'news' | 'ipo';
 
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbySW4jPy7NI6W7ubVAIAIpZRqghTAgE_0WSRwDSDjz7NKRkmsdb7p-gLUslqDVgasCWig/exec";
+const APPS_SCRIPT_SECRET = "Bazaar Is Great";
+
+const generatePassword = () => {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const arr = new Uint32Array(6);
+  crypto.getRandomValues(arr);
+  return "Bazaar@" + Array.from(arr, n => chars[n % chars.length]).join("");
+};
+
+const makeLoginEmail = (fullName: string, used: Set<string>) => {
+  const parts = fullName.toLowerCase().replace(/[^a-z\s]/g, "").split(/\s+/).filter(Boolean);
+  const first = parts[0] || "user";
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
+  const base = last ? `${first}.${last}` : first;
+  let candidate = `${base}@bazaar.com`;
+  let n = 2;
+  while (used.has(candidate)) candidate = `${base}${n++}@bazaar.com`;
+  used.add(candidate);
+  return candidate;
+};
+
 export default function AdminDashboard() {
   const { logoutUser, profile } = useAuth();
   const { isDark, toggleTheme } = useTheme(); 
@@ -294,42 +316,54 @@ export default function AdminDashboard() {
   };
 
   const parseCSV = (type: "news" | "users" | "stocks") => {
-    const lines = csvText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    if (lines.length < 2) return setCsvErrors(["CSV must contain a header row and at least one data row."]);
-    
-    const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
-    const errors: string[] = [];
-    const results: any[] = [];
+  const lines = csvText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length < 2) return setCsvErrors(["CSV must contain a header row and at least one data row."]);
 
-    if (type === "news" && headers[0] !== "headline") errors.push("Column 1 must be 'Headline'.");
-    if (type === "users" && (!headers.includes("email") || !headers.includes("password"))) errors.push("Missing 'Email' or 'Password' headers.");
-    if (type === "stocks" && (!headers.includes("ticker") || !headers.includes("baseprice"))) errors.push("Missing 'Ticker' or 'BasePrice' headers.");
+  const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
+  const errors: string[] = [];
+  const results: any[] = [];
 
-    if (errors.length > 0) return setCsvErrors(errors);
+  if (type === "news" && headers[0] !== "headline") errors.push("Column 1 must be 'Headline'.");
+  if (type === "users" && (!headers.includes("name") || !headers.includes("personalemail"))) errors.push("Missing 'Name' or 'PersonalEmail' headers.");
+  if (type === "stocks" && (!headers.includes("ticker") || !headers.includes("baseprice"))) errors.push("Missing 'Ticker' or 'BasePrice' headers.");
 
-    for (let i = 1; i < lines.length; i++) {
-      const cols = parseCSVLine(lines[i]);
-      if (cols.length !== headers.length) { errors.push(`Row ${i + 1} has mismatched columns (expected ${headers.length}, got ${cols.length}).`); continue; }
-      if (!cols[0]) { errors.push(`Row ${i + 1} is missing a headline.`); continue; }
+  if (errors.length > 0) return setCsvErrors(errors);
 
-      if (type === "news") {
-        const impacts: Record<string, number> = {};
-        for (let j = 1; j < cols.length; j++) {
-          const tickerName = headers[j].toUpperCase();
-          const impactVal = parseFloat(cols[j]);
-          if (!isNaN(impactVal) && impactVal !== 0) {
-            impacts[tickerName] = impactVal;
-          }
-        }
-        results.push({ headline: cols[0], stockImpacts: impacts, durationMinutes: eventDuration });
-      } else if (type === "users") {
-        results.push({ email: cols[0], password: cols[1], name: cols[2] || "Trader", startingBalance: cols[3] || 1000000 });
-      } else if (type === "stocks") {
-        results.push({ ticker: cols[0].toUpperCase(), name: cols[1], sector: cols[2] || "General", basePrice: parseFloat(cols[3]), volatility: parseFloat(cols[4]) || 0.005 });
+  const usedEmails = new Set<string>(users.map(u => (u.email || "").toLowerCase()));
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCSVLine(lines[i]);
+    if (cols.length !== headers.length) { errors.push(`Row ${i + 1} has mismatched columns (expected ${headers.length}, got ${cols.length}).`); continue; }
+    if (type !== "users" && !cols[0]) { errors.push(`Row ${i + 1} is missing a headline.`); continue; }
+
+    if (type === "news") {
+      const impacts: Record<string, number> = {};
+      for (let j = 1; j < cols.length; j++) {
+        const tickerName = headers[j].toUpperCase();
+        const impactVal = parseFloat(cols[j]);
+        if (!isNaN(impactVal) && impactVal !== 0) impacts[tickerName] = impactVal;
       }
+      results.push({ headline: cols[0], stockImpacts: impacts, durationMinutes: eventDuration });
+    } else if (type === "users") {
+      const name = cols[headers.indexOf("name")];
+      const personalEmail = cols[headers.indexOf("personalemail")];
+      const balIdx = headers.indexOf("startingbalance");
+      if (!name || !personalEmail || !/^\S+@\S+\.\S+$/.test(personalEmail)) {
+        errors.push(`Row ${i + 1} needs a valid Name and PersonalEmail.`); continue;
+      }
+      results.push({
+        email: makeLoginEmail(name, usedEmails),
+        password: generatePassword(),
+        name,
+        personalEmail,
+        startingBalance: balIdx >= 0 && cols[balIdx] ? cols[balIdx] : 1000000
+      });
+    } else if (type === "stocks") {
+      results.push({ ticker: cols[0].toUpperCase(), name: cols[1], sector: cols[2] || "General", basePrice: parseFloat(cols[3]), volatility: parseFloat(cols[4]) || 0.005 });
     }
-    setCsvErrors([]); setParsedData(results); setCsvType(type);
-  };
+  }
+  setCsvErrors(errors); setParsedData(results); setCsvType(type);
+};
 
   const downloadSampleNewsCSV = () => {
     const csvContent = [
@@ -352,9 +386,9 @@ export default function AdminDashboard() {
 
   const downloadSampleUsersCSV = () => {
     const csvContent = [
-      "Email,Password,Name,StartingBalance",
-      "trader1@bazaar.com,Trader@2026,Aarav Sharma,1000000",
-      "trader2@bazaar.com,Trader@2026,Priya Patel,1000000"
+      "Name,PersonalEmail,StartingBalance",
+      "Aarav Sharma,aarav@gmail.com,1000000",
+      "Priya Patel,priya@gmail.com,1000000"
     ].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -386,11 +420,15 @@ export default function AdminDashboard() {
 
   const handleImportData = async () => {
     if (parsedData.length === 0) return;
+    const importedUsers = [...parsedData];
     setProcessingAction("import");
     logAdminAction("IMPORT_CSV", { type: csvType, recordCount: parsedData.length });
     try {
       if (csvType === "news") await importNewsEvents(parsedData);
-      else if (csvType === "users") await httpsCallable( 'adminImportUsers')({ users: parsedData });
+      else if (csvType === "users") {
+        await httpsCallable('adminImportUsers')({ users: importedUsers });
+        await saveCredentials(importedUsers);
+      }
       else if (csvType === "stocks") await httpsCallable('adminImportStocks')({ stocks: parsedData });
       
       setParsedData([]); setCsvText(""); 
@@ -398,6 +436,46 @@ export default function AdminDashboard() {
     } catch (err: any) { notify({ type: "alert", title: "Import Failed", message: err.message, impact: "negative" }); } 
     finally { setProcessingAction(null); }
   };
+
+  const callScript = async (payload: any) => {
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ secret: APPS_SCRIPT_SECRET, ...payload })
+  });
+  return res.json();
+};
+
+const saveCredentials = async (list: any[]) => {
+  try {
+    const r = await callScript({
+      action: "save",
+      users: list.map(u => ({ to: u.personalEmail, name: u.name, loginEmail: u.email, password: u.password }))
+    });
+    if (!r.ok) throw new Error(r.error);
+    notify({ type: "alert", title: "Credentials Saved", message: `${r.saved} users saved for later mailing.`, impact: "positive" });
+  } catch (e) {
+    notify({ type: "alert", title: "Sheet Save Failed", message: "Users imported but credentials were NOT saved to the Sheet.", impact: "negative" });
+  }
+};
+
+const handleSendAllCredentials = async () => {
+  if (!window.confirm("Send login credentials to all users who have not received them yet?")) return;
+  setProcessingAction("send-creds");
+  logAdminAction("SEND_LOGIN_MAILS", { target: "ALL_PENDING" });
+  try {
+    const r = await callScript({ action: "sendAll" });
+    if (!r.ok) throw new Error(r.error);
+    notify({
+      type: "alert",
+      title: "Login Mails",
+      message: `Sent: ${r.sent}, Failed: ${r.failed}, Remaining: ${r.remaining}${r.remaining > 0 ? " — click again to continue." : ""}`,
+      impact: r.remaining > 0 || r.failed > 0 ? "negative" : "positive"
+    });
+  } catch (e: any) {
+    notify({ type: "alert", title: "Send Failed", message: "No response from script. Check Apps Script > Executions, then click again (already-sent users are skipped).", impact: "negative" });
+  } finally { setProcessingAction(null); }
+};
 
   const handleAddImpact = () => {
     const ticker = impactTicker.toUpperCase().trim();
@@ -854,6 +932,13 @@ export default function AdminDashboard() {
                     className="px-3 py-1.5 bg-[#3b82f6] hover:opacity-90 disabled:opacity-50 text-white text-[11px] font-bold uppercase rounded flex items-center gap-2 transition-opacity"
                   >
                     {processingAction === 'emails' ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Send Reset Emails
+                  </button>
+                  <button
+                    onClick={handleSendAllCredentials}
+                    disabled={processingAction === 'send-creds'}
+                    className="px-3 py-1.5 bg-[#f59e0b] hover:opacity-90 disabled:opacity-50 text-white text-[11px] font-bold uppercase rounded flex items-center gap-2 transition-opacity"
+                  >
+                    {processingAction === 'send-creds' ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send Login Mails
                   </button>
                 </div>
               </div>

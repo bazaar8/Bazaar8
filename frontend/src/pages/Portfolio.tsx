@@ -251,27 +251,35 @@ export default function Portfolio() {
           <table>
             <thead>
               <tr>
-                <th>TIMESTAMP</th>
+                <th>TIME</th>
                 <th>TICKER</th>
                 <th>ACTION</th>
-                <th class="right">QUANTITY</th>
+                <th class="right">QTY</th>
                 <th class="right">EXEC PRICE</th>
+                <th class="right">P&L</th>
                 <th class="right">TOTAL VALUE</th>
-                <th>STATUS</th>
               </tr>
             </thead>
             <tbody>
-              ${recentOrders.map((o: any) => `
+              ${recentOrders.map((o: any) => {
+                const dateObj = new Date(o.timestamp?.toMillis ? o.timestamp.toMillis() : o.timestamp);
+                const timeStr = dateObj.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+                const hasPnL = o.realizedPnL !== undefined && o.realizedPnL !== 0;
+                const pnlStr = hasPnL ? `₹${Number(o.realizedPnL).toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "—";
+                
+                return `
                 <tr>
-                  <td>${new Date(o.timestamp?.toMillis ? o.timestamp.toMillis() : o.timestamp).toLocaleString()}</td>
+                  <td>${timeStr}</td>
                   <td><strong>${o.ticker}</strong></td>
                   <td class="${['BUY', 'COVER'].includes(o.side) ? 'buy' : 'sell'}">${o.side}</td>
                   <td class="right">${o.quantity}</td>
                   <td class="right">₹${Number(o.priceAtExecution).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                  <td class="right" style="color: ${hasPnL ? (o.realizedPnL >= 0 ? '#089981' : '#f23645') : 'inherit'}">
+                    <strong>${pnlStr}</strong>
+                  </td>
                   <td class="right">₹${(o.quantity * o.priceAtExecution).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                  <td>${o.status.toUpperCase()}</td>
                 </tr>
-              `).join('')}
+              `}).join('')}
             </tbody>
           </table>
         </body>

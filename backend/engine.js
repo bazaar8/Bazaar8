@@ -70,11 +70,13 @@ const IPOSchema = new mongoose.Schema({
   subscriptionRate: { type: Number, default: 0 },
   openTime: Number, closeTime: Number, listTime: Number,
   triggerAllotment: Boolean, triggerListing: Boolean,
+  hasAllotted: { type: Boolean, default: false }, // NEW STRICT LOCK FLAG
   subscriptions: [{
     subId: String, uid: String, requestedShares: Number, requestedLots: Number,
     allocatedLots: { type: Number, default: 0 }, allocatedShares: { type: Number, default: 0 },
     investedAmount: Number, refundedAmount: { type: Number, default: 0 },
-    status: { type: String, default: "pending" }
+    status: { type: String, default: "pending" },
+    timestamp: { type: Number, default: Date.now }
   }]
 });
 
@@ -153,7 +155,7 @@ function startSimulationEngines() {
         if (ipo.status === "upcoming" && ipo.openTime && now >= ipo.openTime) {
           ipo.status = "open"; await ipo.save();
           await NewsEvent.create({
-            eventId: "news_" + Date.now(), headline: ` New IPO Open: ${ipo.ticker} is now OPEN for bidding at ₹${ipo.price}!`,
+            eventId: "news_" + Date.now(), headline: `🚀 New IPO Open: ${ipo.ticker} is now OPEN for bidding at ₹${ipo.price}!`,
             status: "active", startTime: now, createdAt: now, durationMinutes: 60, targetTickers: [ipo.ticker], impactDirection: "positive"
           });
           io.emit("newsUpdate", { type: "new", ipo: ipo.ticker });
@@ -161,37 +163,58 @@ function startSimulationEngines() {
 
         const shouldAllot = ipo.triggerAllotment || ((ipo.status === "open" || ipo.status === "closed") && ipo.closeTime && now >= ipo.closeTime);
 
-        if (shouldAllot && ipo.status !== "allotted" && ipo.status !== "listed") {
+        // ---> STRICT ALLOTMENT LOCK <---
+        if (shouldAllot && ipo.status !== "allotted" && ipo.status !== "listed" && ipo.hasAllotted !== true) {
           const availableLots = Number(ipo.totalLots) || 1;
           const lotSize = Number(ipo.lotSize) || 1;
           const pricePerShare = Number(ipo.price) || 0;
 
-          if (ipo.subscriptions.length === 0) { ipo.status = "allotted"; ipo.triggerAllotment = false; await ipo.save(); continue; }
+          // 1. Lock the IPO immediately
+          ipo.hasAllotted = true; 
+          ipo.status = "allotted";
+          ipo.triggerAllotment = false;
 
+          if (!ipo.subscriptions || ipo.subscriptions.length === 0) {
+            await ipo.save();
+            continue;
+          }
+
+          // 2. Build a safe UID-based lottery pool
           let lotteryPool = [];
-          ipo.subscriptions.forEach((sub, index) => {
+          ipo.subscriptions.forEach((sub) => {
             const reqLots = Number(sub.requestedLots) || Math.max(1, Math.floor((Number(sub.requestedShares) || 1) / lotSize));
-            for (let i = 0; i < reqLots; i++) lotteryPool.push({ subIndex: index, uid: sub.uid });
+            for (let i = 0; i < reqLots; i++) {
+              lotteryPool.push(sub.uid); 
+            }
           });
 
+          // 3. Cryptographic shuffle
           for (let i = lotteryPool.length - 1; i > 0; i--) {
             const j = crypto.randomInt(0, i + 1);
             [lotteryPool[i], lotteryPool[j]] = [lotteryPool[j], lotteryPool[i]];
           }
 
+          // 4. Distribute Lots safely via UID
           const lotsToAward = Math.min(lotteryPool.length, availableLots);
-          const winCounts = {};
-          lotteryPool.slice(0, lotsToAward).forEach(ticket => winCounts[ticket.subIndex] = (winCounts[ticket.subIndex] || 0) + 1);
+          const winCountsByUID = {};
+          lotteryPool.slice(0, lotsToAward).forEach(winnerUID => {
+            winCountsByUID[winnerUID] = (winCountsByUID[winnerUID] || 0) + 1;
+          });
 
+          // 5. Process Subscriptions and Issue Exactly 1 Refund Event per user
           for (let i = 0; i < ipo.subscriptions.length; i++) {
             const sub = ipo.subscriptions[i];
-            const wonLots = winCounts[i] || 0;
+            const wonLots = winCountsByUID[sub.uid] || 0;
             const allocatedShares = wonLots * lotSize;
+            
+            const costBlocked = Number(sub.investedAmount) || 0;
             const costUsed = allocatedShares * pricePerShare;
-            const refundAmount = Math.max(0, sub.investedAmount - costUsed);
+            const refundAmount = Math.max(0, costBlocked - costUsed);
 
-            sub.allocatedLots = wonLots; sub.allocatedShares = allocatedShares;
-            sub.status = wonLots > 0 ? "won" : "lost"; sub.refundedAmount = refundAmount;
+            sub.allocatedLots = wonLots; 
+            sub.allocatedShares = allocatedShares;
+            sub.status = wonLots > 0 ? "won" : "lost"; 
+            sub.refundedAmount = refundAmount;
 
             if (refundAmount > 0 || allocatedShares > 0) {
               const u = await User.findOne({ uid: sub.uid });
@@ -208,7 +231,7 @@ function startSimulationEngines() {
             }
           }
 
-          ipo.status = "allotted"; ipo.triggerAllotment = false; await ipo.save();
+          await ipo.save();
           io.emit("newsUpdate", { type: "allotted", ipo: ipo.ticker });
         }
 
@@ -227,10 +250,11 @@ function startSimulationEngines() {
           io.emit("livePrices", { prices: cachedLivePrices, marketStatus: currentMarketStatus });
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("Auto-IPO Engine Error:", e.message);
+    }
   }, 3000);
 
-  // 2. LEADERBOARD ENGINE
   setInterval(async () => {
     try {
       const users = await User.find({ role: "student" }, "uid name email cashBalance startingBalance holdings").lean();
@@ -276,7 +300,6 @@ function startSimulationEngines() {
     } catch (e) {}
   }, 6000);
 
-  // 3. ULTRA-FAST MARKET SIMULATION (500ms Tick with Mean Reversion & 10% Bounds)
   const TICK_INTERVAL_MS = 500;
 
   setInterval(async () => {
@@ -304,7 +327,6 @@ function startSimulationEngines() {
       for (const ticker of Object.keys(cachedLivePrices)) {
         const stockData = cachedLivePrices[ticker];
         
-        // The foundational anchor! Never drifts automatically.
         const fundamentalBase = Number(stockData.basePrice) || Number(stockData.price);
         
         let eventBias = 0, currentTargetMultiplier = 1;
@@ -326,11 +348,9 @@ function startSimulationEngines() {
 
         const dynamicBasePrice = fundamentalBase * currentTargetMultiplier;
         
-        // Pseudo Market Logic: Mean Reversion to dynamic anchor
         const deviation = (stockData.price - dynamicBasePrice) / fundamentalBase;
-        const meanReversion = -deviation * 0.002; // Soft elastic pull towards center
+        const meanReversion = -deviation * 0.002; 
         
-        // 70% Sector Trend + 30% Individual Noise
         const sector = stockData.sector || "General";
         const individualRandomness = (Math.random() - 0.5);
         const blendedRandomness = (sectorBiases[sector] * 0.7) + (individualRandomness * 0.3);
@@ -339,12 +359,10 @@ function startSimulationEngines() {
         let pctChange = randomStep + eventBias + meanReversion;
         let newPrice = stockData.price * (1 + pctChange);
 
-        // Strict News Bounds (Clamp tightly during news events)
         if (hasActiveNews) {
           newPrice = Math.max(dynamicBasePrice * 0.995, Math.min(dynamicBasePrice * 1.005, newPrice));
         }
 
-        // ABSOLUTE 10% CIRCUIT LIMITER (Prevents 50% drift over 7 days)
         const absoluteMin = Math.max(0.01, fundamentalBase * 0.90);
         const absoluteMax = fundamentalBase * 1.10;
         newPrice = Math.max(absoluteMin, Math.min(absoluteMax, newPrice));
@@ -391,7 +409,6 @@ const authMiddleware = async (req, res, next) => {
     const now = Date.now();
     let cached = authCache.get(decoded.uid);
     
-    // Resolve from cache if verified within the last 15 seconds
     if (cached && (now - cached.ts < 15000)) {
       req.user = cached.user;
       return next();

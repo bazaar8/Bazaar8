@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import React from 'react';
 import { httpsCallable, API_URL } from "../config/api";
 import { socket } from "../config/socket";
 import { useAuth } from "../context/AuthContext";
@@ -1857,101 +1858,132 @@ const handleSendAllCredentials = async () => {
                       {ipos.map(ipo => {
                         const costPerLot = (Number(ipo.price) || 0) * (Number(ipo.lotSize) || 1);
                         const subRate = ipo.subscriptionRate !== undefined ? Number(ipo.subscriptionRate) : Number(((Number(ipo.totalSubscribedLots) || 0) / (Number(ipo.totalLots) || 1)).toFixed(2));
+                        const isAllottedOrListed = ipo.status === 'allotted' || ipo.status === 'listed';
+                        
                         return (
-                          <tr key={ipo.id || ipo.ipoId} className="hover:bg-[var(--bg-root)] transition-colors">
-                            <td className="p-3 text-[var(--text-main)] font-bold">
-                              {ipo.ticker} <span className="block text-[9px] font-normal text-[var(--text-muted)]">{ipo.lotSize} shares/lot</span>
-                            </td>
-                            <td className="p-3 text-right text-[var(--text-main)]">₹{costPerLot.toFixed(2)}</td>
-                            <td className="p-3 text-right">
-                              {editingGmpId === (ipo.id || ipo.ipoId) ? (
-                                <div className="flex items-center justify-end gap-1 font-mono">
-                                  <input 
-                                    type="number"
-                                    value={gmpValue}
-                                    onChange={(e) => setGmpValue(e.target.value)}
-                                    className="w-16 px-1.5 py-0.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-right text-xs text-[var(--up-color)] font-bold focus:outline-none"
-                                    placeholder={`${ipo.listingPremiumPct || 0}`}
-                                    autoFocus
-                                  />
-                                  <span className="text-[10px] text-[var(--text-muted)]">%</span>
-                                  <button
-                                    onClick={() => handleUpdateIPOGMP((ipo.id || ipo.ipoId), ipo.ticker)}
-                                    disabled={processingAction === `${ipo.id || ipo.ipoId}-gmp`}
-                                    className="px-1.5 py-0.5 bg-[var(--up-color)] text-white text-[10px] rounded font-bold hover:opacity-90"
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    onClick={() => setEditingGmpId(null)}
-                                    className="px-1.5 py-0.5 bg-[var(--bg-root)] text-[var(--text-muted)] text-[10px] rounded border border-[var(--border-subtle)]"
-                                  >
-                                    ✕
-                                  </button>
+                          <React.Fragment key={ipo.id || ipo.ipoId}>
+                            <tr className="hover:bg-[var(--bg-root)] transition-colors">
+                              <td className="p-3 text-[var(--text-main)] font-bold">
+                                {ipo.ticker} <span className="block text-[9px] font-normal text-[var(--text-muted)]">{ipo.lotSize} shares/lot</span>
+                              </td>
+                              <td className="p-3 text-right text-[var(--text-main)]">₹{costPerLot.toFixed(2)}</td>
+                              <td className="p-3 text-right">
+                                {editingGmpId === (ipo.id || ipo.ipoId) ? (
+                                  <div className="flex items-center justify-end gap-1 font-mono">
+                                    <input 
+                                      type="number"
+                                      value={gmpValue}
+                                      onChange={(e) => setGmpValue(e.target.value)}
+                                      className="w-16 px-1.5 py-0.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-right text-xs text-[var(--up-color)] font-bold focus:outline-none"
+                                      placeholder={`${ipo.listingPremiumPct || 0}`}
+                                      autoFocus
+                                    />
+                                    <span className="text-[10px] text-[var(--text-muted)]">%</span>
+                                    <button
+                                      onClick={() => handleUpdateIPOGMP((ipo.id || ipo.ipoId), ipo.ticker)}
+                                      disabled={processingAction === `${ipo.id || ipo.ipoId}-gmp`}
+                                      className="px-1.5 py-0.5 bg-[var(--up-color)] text-white text-[10px] rounded font-bold hover:opacity-90"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingGmpId(null)}
+                                      className="px-1.5 py-0.5 bg-[var(--bg-root)] text-[var(--text-muted)] text-[10px] rounded border border-[var(--border-subtle)]"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-end gap-1.5 group">
+                                    <span className={`font-bold ${Number(ipo.listingPremiumPct || 0) > 0 ? 'text-[var(--up-color)]' : Number(ipo.listingPremiumPct || 0) < 0 ? 'text-[var(--down-color)]' : 'text-[var(--text-muted)]'}`}>
+                                      {Number(ipo.listingPremiumPct || 0) > 0 ? `+${ipo.listingPremiumPct}%` : `${ipo.listingPremiumPct || 0}%`}
+                                    </span>
+                                    <button
+                                      onClick={() => { setEditingGmpId(ipo.id || ipo.ipoId); setGmpValue(String(ipo.listingPremiumPct || 0)); }}
+                                      className="opacity-40 group-hover:opacity-100 p-1 text-[var(--text-muted)] hover:text-amber-400 text-[10px] rounded transition-opacity"
+                                      title="Edit GMP"
+                                    >
+                                      <Edit className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="p-3 text-right">
+                                <div className={`font-bold ${subRate >= 1.0 ? 'text-[var(--up-color)]' : subRate > 0 ? 'text-[#3b82f6]' : 'text-[var(--text-muted)]'}`}>
+                                  {subRate.toFixed(2)}x
                                 </div>
-                              ) : (
-                                <div className="flex items-center justify-end gap-1.5 group">
-                                  <span className={`font-bold ${Number(ipo.listingPremiumPct || 0) > 0 ? 'text-[var(--up-color)]' : Number(ipo.listingPremiumPct || 0) < 0 ? 'text-[var(--down-color)]' : 'text-[var(--text-muted)]'}`}>
-                                    {Number(ipo.listingPremiumPct || 0) > 0 ? `+${ipo.listingPremiumPct}%` : `${ipo.listingPremiumPct || 0}%`}
-                                  </span>
-                                  <button
-                                    onClick={() => { setEditingGmpId(ipo.id || ipo.ipoId); setGmpValue(String(ipo.listingPremiumPct || 0)); }}
-                                    className="opacity-40 group-hover:opacity-100 p-1 text-[var(--text-muted)] hover:text-amber-400 text-[10px] rounded transition-opacity"
-                                    title="Edit GMP"
-                                  >
-                                    <Edit className="w-3 h-3" />
-                                  </button>
+                                <div className="text-[9px] text-[var(--text-muted)]">
+                                  {ipo.totalSubscribedLots || 0}/{ipo.totalLots || 1} lots ({ipo.subscriptionCount || 0} bids)
                                 </div>
-                              )}
-                            </td>
-                            <td className="p-3 text-right">
-                              <div className={`font-bold ${subRate >= 1.0 ? 'text-[var(--up-color)]' : subRate > 0 ? 'text-[#3b82f6]' : 'text-[var(--text-muted)]'}`}>
-                                {subRate.toFixed(2)}x
-                              </div>
-                              <div className="text-[9px] text-[var(--text-muted)]">
-                                {ipo.totalSubscribedLots || 0}/{ipo.totalLots || 1} lots ({ipo.subscriptionCount || 0} bids)
-                              </div>
-                            </td>
-                            <td className="p-3 text-center">
-                              <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase ${
-                                ipo.status === 'upcoming' ? 'bg-[#f59e0b15] text-[#f59e0b]' :
-                                ipo.status === 'open' ? 'bg-[#08998115] text-[var(--up-color)] animate-pulse' :
-                                ipo.status === 'allotting' ? 'bg-[#8b5cf615] text-[#8b5cf6] animate-pulse' :
-                                'bg-[#3b82f615] text-[#3b82f6]'
-                              }`}>{ipo.status}</span>
-                            </td>
-                            <td className="p-3 flex justify-end gap-1.5">
-                              <button 
-                                onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'close')}
-                                disabled={ipo.status !== 'open' || processingAction === `${ipo.id || ipo.ipoId}-close`}
-                                className="px-2 py-1 flex items-center gap-1 bg-[#f59e0b15] hover:opacity-80 border border-[#f59e0b50] disabled:opacity-50 text-[#f59e0b] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
-                              >
-                                {processingAction === `${ipo.id || ipo.ipoId}-close` ? <div className="w-3 h-3 border-2 border-[#f59e0b] border-t-transparent rounded-full animate-spin" /> : <><Pause className="w-3 h-3" /> Close</>}
-                              </button>
-                              <button 
-                                onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'allot')}
-                                disabled={ipo.status !== 'closed' || processingAction === `${ipo.id || ipo.ipoId}-allot`}
-                                className="px-2 py-1 flex items-center gap-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] rounded text-[9px] font-bold uppercase justify-center transition-colors"
-                              >
-                                {processingAction === `${ipo.id || ipo.ipoId}-allot` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Allot</>}
-                              </button>
-                              <button 
-                                onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'list')}
-                                disabled={ipo.status !== 'allotted' || processingAction === `${ipo.id || ipo.ipoId}-list`}
-                                className="px-2 py-1 flex items-center gap-1 bg-[#08998115] hover:opacity-80 border border-[#08998150] disabled:opacity-50 text-[var(--up-color)] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
-                              >
-                                 {processingAction === `${ipo.id || ipo.ipoId}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Sparkles className="w-3 h-3" /> List</>}
-                              </button>
-                              <button 
-                                onClick={() => handleDeleteIPO((ipo.id || ipo.ipoId), ipo.ticker)}
-                                disabled={processingAction === `${ipo.id || ipo.ipoId}-delete`}
-                                className="px-2 py-1 flex items-center gap-1 bg-[#f2364515] hover:opacity-80 border border-[#f2364550] disabled:opacity-50 text-[#f23645] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
-                                title="Delete IPO and refund subscribers"
-                              >
-                                 {processingAction === `${ipo.id || ipo.ipoId}-delete` ? <div className="w-3 h-3 border-2 border-[#f23645] border-t-transparent rounded-full animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                              </button>
-                            </td>
-                          </tr>
+                              </td>
+                              <td className="p-3 text-center">
+                                <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase ${
+                                  ipo.status === 'upcoming' ? 'bg-[#f59e0b15] text-[#f59e0b]' :
+                                  ipo.status === 'open' ? 'bg-[#08998115] text-[var(--up-color)] animate-pulse' :
+                                  ipo.status === 'allotting' ? 'bg-[#8b5cf615] text-[#8b5cf6] animate-pulse' :
+                                  'bg-[#3b82f615] text-[#3b82f6]'
+                                }`}>{ipo.status}</span>
+                              </td>
+                              <td className="p-3 flex justify-end gap-1.5">
+                                <button 
+                                  onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'close')}
+                                  disabled={ipo.status !== 'open' || processingAction === `${ipo.id || ipo.ipoId}-close`}
+                                  className="px-2 py-1 flex items-center gap-1 bg-[#f59e0b15] hover:opacity-80 border border-[#f59e0b50] disabled:opacity-50 text-[#f59e0b] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
+                                >
+                                  {processingAction === `${ipo.id || ipo.ipoId}-close` ? <div className="w-3 h-3 border-2 border-[#f59e0b] border-t-transparent rounded-full animate-spin" /> : <><Pause className="w-3 h-3" /> Close</>}
+                                </button>
+                                <button 
+                                  onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'allot')}
+                                  disabled={ipo.status !== 'closed' || processingAction === `${ipo.id || ipo.ipoId}-allot`}
+                                  className="px-2 py-1 flex items-center gap-1 bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] disabled:opacity-50 text-[var(--text-main)] rounded text-[9px] font-bold uppercase justify-center transition-colors"
+                                >
+                                  {processingAction === `${ipo.id || ipo.ipoId}-allot` ? <div className="w-3 h-3 border-2 border-[var(--text-main)] border-t-transparent rounded-full animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Allot</>}
+                                </button>
+                                <button 
+                                  onClick={() => handleIPOAction((ipo.id || ipo.ipoId), 'list')}
+                                  disabled={ipo.status !== 'allotted' || processingAction === `${ipo.id || ipo.ipoId}-list`}
+                                  className="px-2 py-1 flex items-center gap-1 bg-[#08998115] hover:opacity-80 border border-[#08998150] disabled:opacity-50 text-[var(--up-color)] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
+                                >
+                                   {processingAction === `${ipo.id || ipo.ipoId}-list` ? <div className="w-3 h-3 border-2 border-[var(--up-color)] border-t-transparent rounded-full animate-spin" /> : <><Sparkles className="w-3 h-3" /> List</>}
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteIPO((ipo.id || ipo.ipoId), ipo.ticker)}
+                                  disabled={processingAction === `${ipo.id || ipo.ipoId}-delete`}
+                                  className="px-2 py-1 flex items-center gap-1 bg-[#f2364515] hover:opacity-80 border border-[#f2364550] disabled:opacity-50 text-[#f23645] rounded text-[9px] font-bold uppercase justify-center transition-opacity"
+                                  title="Delete IPO and refund subscribers"
+                                >
+                                   {processingAction === `${ipo.id || ipo.ipoId}-delete` ? <div className="w-3 h-3 border-2 border-[#f23645] border-t-transparent rounded-full animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                                </button>
+                              </td>
+                            </tr>
+                            {isAllottedOrListed && ipo.subscriptions && ipo.subscriptions.length > 0 && (
+                              <tr className="bg-[var(--bg-root)] border-t border-dashed border-[var(--border-subtle)]">
+                                <td colSpan={6} className="p-3">
+                                  <div className="pl-4 border-l-2 border-[#3b82f6] text-[10px] space-y-1">
+                                    <div className="font-bold text-[var(--text-main)] uppercase tracking-wider mb-2">Allotment Breakdown ({ipo.subscriptions.length} Applications)</div>
+                                    <div className="max-h-32 overflow-y-auto pr-2 scrollbar-thin">
+                                      {ipo.subscriptions.map((sub: any, i: number) => {
+                                        const trader = users.find(u => u.uid === sub.uid);
+                                        const traderName = trader ? trader.email.split('@')[0] : sub.uid.slice(-6);
+                                        const won = Number(sub.allocatedLots) > 0;
+                                        return (
+                                          <div key={i} className="flex items-center justify-between py-1 border-b border-[var(--border-subtle)] last:border-0">
+                                            <span className="text-[var(--text-muted)] font-mono">{traderName}</span>
+                                            <div className="flex items-center gap-3">
+                                              <span className="text-[var(--text-main)] font-bold">Applied: {sub.requestedLots || 1} lot(s)</span>
+                                              <span className={`font-bold w-24 text-right ${won ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
+                                                {won ? `WON ${sub.allocatedLots} LOT(S)` : '0 LOTS (REFUND)'}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>

@@ -338,12 +338,21 @@ export default function IPO() {
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={() => setLotsToApply(Math.max(1, lotsToApply - 1))}
-                    className="px-2 py-0.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-[var(--text-main)] font-bold"
+                    className="px-2 py-0.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-[var(--text-main)] font-bold hover:bg-[var(--border-subtle)] transition-colors"
                   >-</button>
-                  <span className="font-bold text-[var(--text-main)]">{lotsToApply}</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={lotsToApply || ""}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      setLotsToApply(isNaN(val) ? 0 : Math.max(1, val));
+                    }}
+                    className="w-16 px-1.5 py-0.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-center text-[var(--text-main)] font-bold font-mono focus:outline-none focus:border-[var(--up-color)] hide-number-spinners"
+                  />
                   <button 
                     onClick={() => setLotsToApply(lotsToApply + 1)}
-                    className="px-2 py-0.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-[var(--text-main)] font-bold"
+                    className="px-2 py-0.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-[var(--text-main)] font-bold hover:bg-[var(--border-subtle)] transition-colors"
                   >+</button>
                 </div>
               </div>

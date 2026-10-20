@@ -102,32 +102,32 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }}>
       {children}
 
-      {/* MAC-STYLE LIQUID GLASSMORPHISM NOTIFICATION */}
+      {/* MAC-STYLE LIQUID GLASSMORPHISM NOTIFICATION (Light & Dark Theme Adaptive) */}
       {activeNewsToast && (
         <div className="fixed top-16 right-4 sm:right-6 z-[9999] max-w-sm sm:max-w-md w-full pointer-events-auto animate-in slide-in-from-top-4 fade-in duration-500 ease-out">
           {/* Outer glow and frosted glass container */}
-          <div className="relative overflow-hidden rounded-[20px] bg-white/10 dark:bg-black/20 backdrop-blur-[24px] saturate-[1.5] border border-white/20 shadow-[0_8px_32px_0_rgba(31,38,135,0.2)]">
+          <div className="relative overflow-hidden rounded-[20px] bg-white/70 dark:bg-black/40 backdrop-blur-2xl saturate-[1.5] border border-zinc-200/50 dark:border-white/10 shadow-[0_12px_40px_0_rgba(0,0,0,0.15)] dark:shadow-[0_8px_32px_0_rgba(31,38,135,0.2)]">
             
             {/* Ambient liquid glow behind the text */}
-            <div className="absolute -top-10 -right-10 w-40 h-40 bg-blue-500/30 rounded-full blur-[40px] pointer-events-none" />
-            <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-400/20 rounded-full blur-[40px] pointer-events-none" />
+            <div className="absolute -top-10 -right-10 w-40 h-40 bg-blue-400/20 dark:bg-blue-500/30 rounded-full blur-[40px] pointer-events-none" />
+            <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-300/20 dark:bg-cyan-400/20 rounded-full blur-[40px] pointer-events-none" />
 
             <div className="relative flex items-start gap-4 p-5">
               {/* Icon Circle */}
-              <div className="w-10 h-10 rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30 shadow-inner flex items-center justify-center flex-shrink-0 backdrop-blur-md">
+              <div className="w-10 h-10 rounded-full bg-blue-500/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300 border border-blue-500/20 dark:border-blue-400/30 shadow-inner flex items-center justify-center flex-shrink-0 backdrop-blur-md">
                 <Radio className="w-5 h-5 animate-pulse" />
               </div>
 
               <div className="flex-1 min-w-0 pt-0.5">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[10px] font-medium tracking-[0.15em] uppercase text-blue-200/90 dark:text-blue-300 drop-shadow-sm">
+                  <span className="text-[10px] font-bold tracking-[0.15em] uppercase text-blue-600 dark:text-blue-200/90 drop-shadow-sm">
                     Breaking Wire
                   </span>
-                  <span className="w-1 h-1 rounded-full bg-blue-400/50" />
-                  <span className="text-[10px] text-zinc-600 dark:text-zinc-400/80">Just now</span>
+                  <span className="w-1 h-1 rounded-full bg-blue-500/40" />
+                  <span className="text-[10px] text-zinc-500 dark:text-zinc-400/80 font-medium">Just now</span>
                 </div>
 
-                <h4 className="text-sm font-semibold text-zinc-900 dark:text-white leading-snug drop-shadow-sm">
+                <h4 className="text-sm font-bold text-zinc-900 dark:text-white leading-snug drop-shadow-sm">
                   {activeNewsToast.title || activeNewsToast.message}
                 </h4>
 
@@ -135,7 +135,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
                   <Link
                     to="/news"
                     onClick={() => setActiveNewsToast(null)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-[11px] font-semibold text-blue-600 dark:text-blue-300 transition-all duration-300"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-[11px] font-bold text-blue-700 dark:text-blue-300 transition-all duration-300"
                   >
                     <span>Read Full Update</span>
                     <ArrowRight className="w-3 h-3" />
@@ -145,15 +145,15 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
               <button
                 onClick={() => setActiveNewsToast(null)}
-                className="w-6 h-6 flex items-center justify-center rounded-full bg-black/5 hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20 text-zinc-600 dark:text-zinc-300 transition-colors flex-shrink-0"
+                className="w-6 h-6 flex items-center justify-center rounded-full bg-zinc-200/50 hover:bg-zinc-300/70 dark:bg-white/10 dark:hover:bg-white/20 text-zinc-600 dark:text-zinc-300 transition-colors flex-shrink-0"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
 
             {/* Subtle frosted progress bar */}
-            <div className="absolute bottom-0 left-0 w-full h-[3px] bg-white/10 dark:bg-black/20">
-              <div className="h-full bg-gradient-to-r from-blue-400 to-cyan-300 shadow-[0_0_10px_rgba(59,130,246,0.5)] animate-[toastProgress_8s_linear_forwards]" />
+            <div className="absolute bottom-0 left-0 w-full h-[3px] bg-zinc-200 dark:bg-black/20">
+              <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 shadow-[0_0_10px_rgba(59,130,246,0.5)] animate-[toastProgress_8s_linear_forwards]" />
             </div>
 
           </div>

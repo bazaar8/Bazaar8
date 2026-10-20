@@ -18,7 +18,6 @@ export default function StockDetail() {
   const tradingData = useUserTradingData() as any;
   const cashBalance = Number(tradingData?.cashBalance ?? 0);
   
-  // Normalize long and short holdings from context
   const holdings: any[] = tradingData?.holdings || [
     ...(tradingData?.longHoldings || []),
     ...(tradingData?.shortHoldings || [])
@@ -36,7 +35,6 @@ export default function StockDetail() {
     pnlPct?: number;
   } | null>(null);
 
-  // Dynamic Chart History State (Locked to 1m timeframe)
   const [historyLimit, setHistoryLimit] = useState<number>(120); 
   const [chartHistory, setChartHistory] = useState<Record<string, number>>({});
   const [isFetchingHistory, setIsFetchingHistory] = useState<boolean>(false);
@@ -59,7 +57,6 @@ export default function StockDetail() {
   const highestValue = Number(dbData?.high || Math.max(livePrice, stockMeta.basePrice * 1.06));
   const lowestValue = Number(dbData?.low || Math.min(livePrice, stockMeta.basePrice * 0.94));
 
-  // Active Long & Short Positions
   const longPosition = holdings.find((h) => h.ticker === stockMeta.ticker && h.positionType === "long");
   const shortPosition = holdings.find((h) => h.ticker === stockMeta.ticker && h.positionType === "short");
 
@@ -68,10 +65,10 @@ export default function StockDetail() {
   const estimatedTax = estimatedTotal * 0.001; 
   const netProceeds = (side === "SELL" || side === "SHORT") ? estimatedTotal - estimatedTax : estimatedTotal + estimatedTax;
 
+  // Safe calculated max quantities
   const maxBuyQty = livePrice > 0 ? Math.floor(cashBalance / (livePrice * 1.001)) : 0;
   const maxShortQty = livePrice > 0 ? Math.floor(cashBalance / (livePrice * 1.001)) : 0;
 
-  // Fetch expanded historical price data when scrolling back
   const fetchHistoricalData = useCallback(async (limit: number) => {
     try {
       setIsFetchingHistory(true);
@@ -81,9 +78,7 @@ export default function StockDetail() {
       });
       if (res.ok) {
         const json = await res.json();
-        if (json.data) {
-          setChartHistory(json.data);
-        }
+        if (json.data) setChartHistory(json.data);
       }
     } catch (e) {
       console.error("Failed to load historical data", e);
@@ -96,12 +91,9 @@ export default function StockDetail() {
     fetchHistoricalData(historyLimit);
   }, [fetchHistoricalData, historyLimit]);
 
-  // Hidden scroll handler triggered by the chart when scrolling left
-  const handleZoomOut = () => {
-    setHistoryLimit((prev) => Math.min(prev + 120, 1440)); 
-  };
+  const handleZoomOut = () => setHistoryLimit((prev) => Math.min(prev + 120, 1440)); 
 
-  // Trade Executor
+  // Primary Standard Order Executor
   const handleAction = async () => {
     if (numQty <= 0) return;
     setLoading(true);
@@ -110,9 +102,7 @@ export default function StockDetail() {
     try {
       const res: any = await executeTrade(stockMeta.ticker, side, numQty);
       setResult(res);
-      if (res.status === "completed") {
-        setQuantity("1");
-      }
+      if (res.status === "completed") setQuantity("1");
     } catch (err: any) {
       setResult({ status: "rejected", reason: err.message || "Execution rejected by market engine" });
     } finally {
@@ -121,36 +111,19 @@ export default function StockDetail() {
     }
   };
 
-  const handleSellAllLongs = async () => {
-    if (!longPosition || longPosition.quantity <= 0) return;
-    const qtyToSell = longPosition.quantity;
-    setSide("SELL");
-    setQuantity(String(qtyToSell));
+  // Instant Max Buy / Max Short / Cover / Sell executors
+  const handleInstantMaxTrade = async (actionSide: "BUY" | "SELL" | "SHORT" | "COVER", explicitQty: number) => {
+    if (explicitQty <= 0) return;
+    
+    // Instantly sync the UI state to what is executing
+    setSide(actionSide);
+    setQuantity(String(explicitQty));
+    
     setLoading(true);
     setResult(null);
 
     try {
-      const res: any = await executeTrade(stockMeta.ticker, "SELL", qtyToSell);
-      setResult(res);
-      setQuantity("1");
-    } catch (err: any) {
-      setResult({ status: "rejected", reason: err.message || "Execution error" });
-    } finally {
-      setLoading(false);
-      setTimeout(() => setResult(null), 6000);
-    }
-  };
-
-  const handleCoverAllShorts = async () => {
-    if (!shortPosition || shortPosition.quantity <= 0) return;
-    const qtyToCover = shortPosition.quantity;
-    setSide("COVER");
-    setQuantity(String(qtyToCover));
-    setLoading(true);
-    setResult(null);
-
-    try {
-      const res: any = await executeTrade(stockMeta.ticker, "COVER", qtyToCover);
+      const res: any = await executeTrade(stockMeta.ticker, actionSide, explicitQty);
       setResult(res);
       setQuantity("1");
     } catch (err: any) {
@@ -298,7 +271,7 @@ export default function StockDetail() {
                 </div>
                 <button
                   type="button"
-                  onClick={handleSellAllLongs}
+                  onClick={() => handleInstantMaxTrade("SELL", longPosition.quantity)}
                   disabled={loading}
                   className="w-full py-2 bg-[var(--down-color)] text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded hover:opacity-90 transition-opacity shadow-sm flex items-center justify-center gap-1.5"
                 >
@@ -316,7 +289,7 @@ export default function StockDetail() {
                 </div>
                 <button
                   type="button"
-                  onClick={handleCoverAllShorts}
+                  onClick={() => handleInstantMaxTrade("COVER", shortPosition.quantity)}
                   disabled={loading}
                   className="w-full py-2 bg-[var(--up-color)] text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded hover:opacity-90 transition-opacity shadow-sm flex items-center justify-center gap-1.5"
                 >
@@ -342,26 +315,25 @@ export default function StockDetail() {
                       </button>
                     ))}
 
+                    {/* NEW: Instant Max Execute Buttons */}
                     <button
                       type="button"
-                      onClick={() => {
-                        setSide("BUY");
-                        setQuantity(String(Math.max(1, maxBuyQty)));
-                      }}
-                      className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 border border-blue-500/40 rounded text-[10px] font-bold"
+                      disabled={loading || maxBuyQty <= 0}
+                      onClick={() => handleInstantMaxTrade("BUY", Math.max(1, maxBuyQty))}
+                      className="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 disabled:opacity-50 border border-blue-500/40 rounded text-[10px] font-bold flex items-center gap-1 transition-colors"
+                      title="Instantly execute a Max Buy order"
                     >
-                      Max Buy ({maxBuyQty})
+                      <Zap className="w-3 h-3 fill-current" /> Buy {maxBuyQty}
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => {
-                        setSide("SHORT");
-                        setQuantity(String(Math.max(1, maxShortQty)));
-                      }}
-                      className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded text-[10px] font-bold"
+                      disabled={loading || maxShortQty <= 0}
+                      onClick={() => handleInstantMaxTrade("SHORT", Math.max(1, maxShortQty))}
+                      className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 disabled:opacity-50 border border-amber-500/40 rounded text-[10px] font-bold flex items-center gap-1 transition-colors"
+                      title="Instantly execute a Max Short order"
                     >
-                      Max Short ({maxShortQty})
+                      <Zap className="w-3 h-3 fill-current" /> Short {maxShortQty}
                     </button>
                   </div>
                 </div>

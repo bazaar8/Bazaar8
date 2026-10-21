@@ -106,12 +106,12 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       {activeNewsToast && (
         <div className="fixed top-16 right-4 sm:right-6 z-[9999] max-w-sm sm:max-w-md w-full pointer-events-auto animate-in slide-in-from-top-4 fade-in duration-500 ease-out">
           
-          {/* True Mac-Style Frosted Glass Container */}
-          <div className="relative overflow-hidden rounded-[24px] bg-white/40 dark:bg-[#1c1c1e]/60 backdrop-blur-[48px] backdrop-saturate-[180%] border border-white/50 dark:border-[var(--border-subtle)] shadow-[0_8px_32px_rgba(0,0,0,0.15)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
+          {/* True Mac-Style Frosted Glass Container with adjusted Dark Mode opacity */}
+          <div className="relative overflow-hidden rounded-[24px] bg-white/40 dark:bg-black/40 backdrop-blur-[48px] backdrop-saturate-[180%] border border-white/50 dark:border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.15)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
             
             {/* Ambient liquid glow behind the text */}
-            <div className="absolute -top-10 -right-10 w-40 h-40 bg-blue-400/20 dark:bg-blue-500/30 rounded-full blur-[40px] pointer-events-none" />
-            <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-300/20 dark:bg-cyan-400/20 rounded-full blur-[40px] pointer-events-none" />
+            <div className="absolute -top-10 -right-10 w-40 h-40 bg-blue-400/20 dark:bg-blue-500/25 rounded-full blur-[40px] pointer-events-none" />
+            <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-300/20 dark:bg-cyan-400/15 rounded-full blur-[40px] pointer-events-none" />
 
             <div className="relative flex items-start gap-4 p-4 sm:p-5">
               {/* Icon Circle */}
@@ -146,7 +146,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
               <button
                 onClick={() => setActiveNewsToast(null)}
-                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors flex-shrink-0"
+                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors flex-shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>

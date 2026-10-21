@@ -292,7 +292,6 @@ export default function IPO() {
                       className="w-full py-2 bg-[var(--up-color)] hover:opacity-90 text-white text-xs font-bold uppercase rounded transition-opacity flex items-center justify-center gap-1.5 shadow-sm"
                     >
                       <span>Apply for IPO</span>
-                      <span className="text-[10px] opacity-80">(Random Draw)</span>
                     </button>
                   ) : (
                     <button disabled className="w-full py-2 bg-[var(--bg-root)] border border-[var(--border-subtle)] text-[var(--text-muted)] text-xs font-bold uppercase rounded opacity-50 cursor-not-allowed">

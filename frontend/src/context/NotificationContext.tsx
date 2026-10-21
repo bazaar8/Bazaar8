@@ -102,15 +102,19 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }}>
       {children}
 
+      {/* MAC-STYLE LIQUID GLASSMORPHISM NOTIFICATION */}
       {activeNewsToast && (
         <div className="fixed top-16 right-4 sm:right-6 z-[9999] max-w-sm sm:max-w-md w-full pointer-events-auto animate-in slide-in-from-top-4 fade-in duration-500 ease-out">
-          <div className="relative overflow-hidden rounded-[20px] bg-white/85 dark:bg-[#1c1c1e]/85 backdrop-blur-[40px] border border-[var(--border-subtle)] shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
-
+          
+          {/* True Mac-Style Frosted Glass Container */}
+          <div className="relative overflow-hidden rounded-[24px] bg-white/40 dark:bg-[#1c1c1e]/60 backdrop-blur-[48px] backdrop-saturate-[180%] border border-white/50 dark:border-[var(--border-subtle)] shadow-[0_8px_32px_rgba(0,0,0,0.15)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
+            
+            {/* Ambient liquid glow behind the text */}
             <div className="absolute -top-10 -right-10 w-40 h-40 bg-blue-400/20 dark:bg-blue-500/30 rounded-full blur-[40px] pointer-events-none" />
             <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-300/20 dark:bg-cyan-400/20 rounded-full blur-[40px] pointer-events-none" />
 
             <div className="relative flex items-start gap-4 p-4 sm:p-5">
-
+              {/* Icon Circle */}
               <div className="w-10 h-10 rounded-full bg-[var(--bg-root)] text-[var(--text-main)] border border-[var(--border-subtle)] shadow-inner flex items-center justify-center flex-shrink-0 backdrop-blur-md">
                 <Radio className="w-5 h-5 animate-pulse" />
               </div>
@@ -132,7 +136,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
                   <Link
                     to="/news"
                     onClick={() => setActiveNewsToast(null)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--bg-root)] hover:bg-[var(--border-subtle)] border border-[var(--border-subtle)] text-[11px] font-bold text-[var(--text-main)] transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/5 hover:bg-black/10 dark:bg-[var(--bg-root)] dark:hover:bg-[var(--border-subtle)] border border-transparent dark:border-[var(--border-subtle)] text-[11px] font-bold text-[var(--text-main)] transition-colors"
                   >
                     <span>Read Full Update</span>
                     <ArrowRight className="w-3 h-3" />
@@ -142,12 +146,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
               <button
                 onClick={() => setActiveNewsToast(null)}
-                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors flex-shrink-0"
+                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors flex-shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            {/* Subtle frosted progress bar */}
             <div className="absolute bottom-0 left-0 w-full h-[3px] bg-[var(--border-subtle)]">
               <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 shadow-[0_0_8px_rgba(59,130,246,0.6)] animate-[toastProgress_8s_linear_forwards]" />
             </div>

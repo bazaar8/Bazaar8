@@ -102,61 +102,49 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }}>
       {children}
 
-      {/* MAC-STYLE LIQUID GLASSMORPHISM NOTIFICATION */}
+      {/* MAC-STYLE MINIMAL PURE GLASS NOTIFICATION */}
       {activeNewsToast && (
         <div className="fixed top-16 right-4 sm:right-6 z-[9999] max-w-sm sm:max-w-md w-full pointer-events-auto animate-in slide-in-from-top-4 fade-in duration-500 ease-out">
           
-          {/* True Mac-Style Frosted Glass Container with adjusted Dark Mode opacity */}
-          <div className="relative overflow-hidden rounded-[24px] bg-white/40 dark:bg-black/40 backdrop-blur-[48px] backdrop-saturate-[180%] border border-white/50 dark:border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.15)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.5)]">
+          {/* Pure Glass Container - No internal colors or glows */}
+          <div className="relative rounded-[16px] bg-white/30 dark:bg-[#1c1c1e]/40 backdrop-blur-[40px] backdrop-saturate-[200%] border border-white/50 dark:border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.1)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.4)] p-4 flex items-start gap-3.5">
             
-            {/* Ambient liquid glow behind the text */}
-            <div className="absolute -top-10 -right-10 w-40 h-40 bg-blue-400/20 dark:bg-blue-500/25 rounded-full blur-[40px] pointer-events-none" />
-            <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-300/20 dark:bg-cyan-400/15 rounded-full blur-[40px] pointer-events-none" />
-
-            <div className="relative flex items-start gap-4 p-4 sm:p-5">
-              {/* Icon Circle */}
-              <div className="w-10 h-10 rounded-full bg-[var(--bg-root)] text-[var(--text-main)] border border-[var(--border-subtle)] shadow-inner flex items-center justify-center flex-shrink-0 backdrop-blur-md">
-                <Radio className="w-5 h-5 animate-pulse" />
-              </div>
-
-              <div className="flex-1 min-w-0 pt-0.5">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[10px] font-bold tracking-widest uppercase text-[var(--text-main)] drop-shadow-sm">
-                    Breaking Wire
-                  </span>
-                  <span className="w-1 h-1 rounded-full bg-[var(--text-muted)]" />
-                  <span className="text-[10px] text-[var(--text-muted)] font-medium">Just now</span>
-                </div>
-
-                <h4 className="text-sm font-bold text-[var(--text-main)] leading-snug drop-shadow-sm">
-                  {activeNewsToast.title || activeNewsToast.message}
-                </h4>
-
-                 <div className="mt-3">
-                  <Link
-                    to="/news"
-                    onClick={() => setActiveNewsToast(null)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/5 hover:bg-black/10 dark:bg-[var(--bg-root)] dark:hover:bg-[var(--border-subtle)] border border-transparent dark:border-[var(--border-subtle)] text-[11px] font-bold text-[var(--text-main)] transition-colors"
-                  >
-                    <span>Read Full Update</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </Link>
-                </div> 
-              </div>
-
-              <button
-                onClick={() => setActiveNewsToast(null)}
-                className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors flex-shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
+            {/* Minimal Icon */}
+            <div className="w-9 h-9 rounded-xl bg-black/5 dark:bg-white/10 border border-[var(--border-subtle)] shadow-inner flex items-center justify-center flex-shrink-0 text-[var(--text-main)]">
+              <Radio className="w-4 h-4 animate-pulse" />
             </div>
 
-            {/* Subtle frosted progress bar */}
-            <div className="absolute bottom-0 left-0 w-full h-[3px] bg-[var(--border-subtle)]">
-              <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 shadow-[0_0_8px_rgba(59,130,246,0.6)] animate-[toastProgress_8s_linear_forwards]" />
+            <div className="flex-1 min-w-0 pt-0.5">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-[11px] font-semibold tracking-wide uppercase text-[var(--text-main)]">
+                  Bazaar News
+                </span>
+                <span className="text-[10px] text-[var(--text-muted)] font-medium">now</span>
+              </div>
+
+              {/* Clean, High-Contrast Text */}
+              <h4 className="text-sm font-medium text-[var(--text-main)] leading-snug">
+                {activeNewsToast.title || activeNewsToast.message}
+              </h4>
+
+               <div className="mt-2.5">
+                <Link
+                  to="/news"
+                  onClick={() => setActiveNewsToast(null)}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#3b82f6] hover:underline transition-colors"
+                >
+                  <span>Read Full Update</span>
+                  <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div> 
             </div>
 
+            <button
+              onClick={() => setActiveNewsToast(null)}
+              className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-white/10 text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors flex-shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}

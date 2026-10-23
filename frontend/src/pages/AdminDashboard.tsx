@@ -810,7 +810,7 @@ const handleSendAllCredentials = async () => {
                 </div>
                 <div className="terminal-card p-4">
                   <div className="text-[var(--text-muted)] text-[10px] font-bold uppercase mb-1">Total Executions</div>
-                  <div className="text-xl font-bold font-mono text-[var(--text-main)]">{orders.length}</div>
+                  <div className="text-xl font-bold font-mono text-[var(--text-main)]">{orders.length >= 50 ? "50+" : orders.length}</div>
                 </div>
                 <div className="terminal-card p-4">
                   <div className="text-[var(--text-muted)] text-[10px] font-bold uppercase mb-1">Active Tickers</div>
@@ -1275,6 +1275,25 @@ const handleSendAllCredentials = async () => {
                   <p className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">
                     Add news events (single or bulk), manage the queue, and trigger breaking news alerts on demand.
                   </p>
+                </div>
+
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-[var(--text-muted)]" />
+                  <input
+                    type="text"
+                    placeholder="Search headlines, tickers, or status..."
+                    value={newsSearchQuery}
+                    onChange={(e) => setNewsSearchQuery(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1.5 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded text-xs font-mono text-[var(--text-main)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[#3b82f6]"
+                  />
+                  {newsSearchQuery && (
+                    <button 
+                      onClick={() => setNewsSearchQuery("")}
+                      className="absolute right-2 top-2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               </div>
               

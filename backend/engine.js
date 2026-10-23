@@ -96,7 +96,8 @@ const SystemStateSchema = new mongoose.Schema({
   livePrices: { type: Object, default: {} },
   marketInfluence: { type: Object, default: {} },
   totalTaxCollected: { type: Number, default: 0 },
-  lastTradeTax: { type: Number, default: 0 }
+  lastTradeTax: { type: Number, default: 0 },
+  priceHistory: { type: Object, default: {} }
 });
 
 const AdminLogSchema = new mongoose.Schema({
@@ -116,6 +117,7 @@ let currentMarketStatus = "CLOSED";
 let cachedLivePrices = {};
 let cachedInfluences = {};
 let cachedPriceHistory = {}; 
+let pseudoBasePrices = {};
 let totalTaxCollected = 0;
 let lastTradeTax = 0;
 let cachedRankings = [];
@@ -133,6 +135,7 @@ mongoose.connect(MONGO_URI, { maxPoolSize: 20, serverSelectionTimeoutMS: 5000 })
   cachedLivePrices = sys.livePrices || {};
   cachedInfluences = sys.marketInfluence || {};
   totalTaxCollected = sys.totalTaxCollected || 0;
+  cachedPriceHistory = sys.priceHistory || {};
 
   const admin = await User.findOne({ role: "admin" });
   if (!admin) {
@@ -219,17 +222,27 @@ function startSimulationEngines() {
             if (refundAmount > 0 || allocatedShares > 0) {
               const u = await User.findOne({ uid: sub.uid });
               if (u) {
-                if (refundAmount > 0) u.cashBalance += refundAmount;
-                if (allocatedShares > 0) {
-                  const existing = u.holdings.find(h => h.ticker === ipo.ticker && h.positionType === "long");
-                  if (existing) existing.quantity += allocatedShares;
-                  else u.holdings.push({ ticker: ipo.ticker, positionType: "long", quantity: allocatedShares, avgPrice: pricePerShare });
+                if (refundAmount > 0) {
+                  u.cashBalance = Number(u.cashBalance) + refundAmount;
                 }
+                if (allocatedShares > 0) {
+                  const existingIdx = u.holdings.findIndex(h => h.ticker === ipo.ticker && h.positionType === "long");
+                  if (existingIdx !== -1) {
+                    u.holdings[existingIdx].quantity += allocatedShares;
+                  } else {
+                    u.holdings.push({ ticker: ipo.ticker, positionType: "long", quantity: allocatedShares, avgPrice: pricePerShare });
+                  }
+                }
+                u.markModified("holdings"); // Force Mongoose to save the holding changes
                 await u.save();
                 io.emit(`userUpdate:${sub.uid}`, { cashBalance: u.cashBalance, holdings: u.holdings });
               }
             }
           }
+
+          ipo.markModified("subscriptions"); // Force Mongoose to save subscription changes
+          await ipo.save();
+          io.emit("newsUpdate", { type: "allotted", ipo: ipo.ticker });
 
           await ipo.save();
           io.emit("newsUpdate", { type: "allotted", ipo: ipo.ticker });
@@ -324,12 +337,21 @@ function startSimulationEngines() {
          if (sectorBiases[sector] === undefined) sectorBiases[sector] = (Math.random() - 0.5); 
       });
 
+      // Update Pseudo Base Prices every 30 seconds (60 ticks of 500ms)
+      if (tickCount % 60 === 0) {
+        for (const tkr of Object.keys(cachedLivePrices)) {
+          pseudoBasePrices[tkr] = cachedLivePrices[tkr].price;
+        }
+      }
+
       for (const ticker of Object.keys(cachedLivePrices)) {
         const stockData = cachedLivePrices[ticker];
         
-        const fundamentalBase = Number(stockData.basePrice) || Number(stockData.price);
+        // Initialize pseudo base if missing
+        if (!pseudoBasePrices[ticker]) pseudoBasePrices[ticker] = Number(stockData.basePrice) || Number(stockData.price);
+        const currentPseudoBase = pseudoBasePrices[ticker];
         
-        let eventBias = 0, currentTargetMultiplier = 1;
+        let eventBias = 0;
         let hasActiveNews = false;
 
         for (const [eventId, inf] of Object.entries(cachedInfluences)) {
@@ -340,32 +362,36 @@ function startSimulationEngines() {
             const durationMs = (inf.durationMinutes || 15) * 60 * 1000;
             if (elapsedMs > 0 && elapsedMs <= durationMs) {
               const progress = elapsedMs / durationMs;
+              // Apply sine wave momentum for this specific tick
               eventBias += (targetImpactPct / (durationMs / TICK_INTERVAL_MS)) * (Math.PI / 2) * Math.sin(progress * Math.PI);
-              currentTargetMultiplier += (targetImpactPct * ((1 - Math.cos(progress * Math.PI)) / 2));
             }
           }
         }
 
-        const dynamicBasePrice = fundamentalBase * currentTargetMultiplier;
-        
-        const deviation = (stockData.price - dynamicBasePrice) / fundamentalBase;
-        const meanReversion = -deviation * 0.002; 
-        
-        const sector = stockData.sector || "General";
-        const individualRandomness = (Math.random() - 0.5);
-        const blendedRandomness = (sectorBiases[sector] * 0.7) + (individualRandomness * 0.3);
-        const randomStep = blendedRandomness * (stockData.volatility || 0.005);
-
-        let pctChange = randomStep + eventBias + meanReversion;
-        let newPrice = stockData.price * (1 + pctChange);
+        let newPrice = stockData.price;
 
         if (hasActiveNews) {
-          newPrice = Math.max(dynamicBasePrice * 0.995, Math.min(dynamicBasePrice * 1.005, newPrice));
-        }
+          // 1. News Mode: Let the news drive the price, pause the random walk
+          newPrice = stockData.price * (1 + eventBias);
+          // Lock the pseudo base to the news price so it doesn't crash back when news ends
+          pseudoBasePrices[ticker] = newPrice;
+        } else {
+          // 2. Normal Mode: +/- 2% Random Walk around the pseudo base
+          const deviation = (stockData.price - currentPseudoBase) / currentPseudoBase;
+          const meanReversion = -deviation * 0.05; // Snap back to pseudo base
+          
+          const sector = stockData.sector || "General";
+          const individualRandomness = (Math.random() - 0.5);
+          const blendedRandomness = (sectorBiases[sector] * 0.7) + (individualRandomness * 0.3);
+          const randomStep = blendedRandomness * (stockData.volatility || 0.005);
 
-        const absoluteMin = Math.max(0.01, fundamentalBase * 0.90);
-        const absoluteMax = fundamentalBase * 1.10;
-        newPrice = Math.max(absoluteMin, Math.min(absoluteMax, newPrice));
+          newPrice = stockData.price * (1 + randomStep + meanReversion);
+
+          // Lock rigidly to a maximum +/- 2% drift from the 30-second pseudo base
+          const absoluteMin = Math.max(0.01, currentPseudoBase * 0.98);
+          const absoluteMax = currentPseudoBase * 1.02;
+          newPrice = Math.max(absoluteMin, Math.min(absoluteMax, newPrice));
+        }
 
         const currHigh = Math.max(Number(stockData.high || newPrice), Number(newPrice));
         const currLow = Math.min(Number(stockData.low || newPrice), Number(newPrice));
@@ -395,7 +421,14 @@ function startSimulationEngines() {
 
   setInterval(async () => {
     try {
-      await SystemState.updateOne({ key: "main" }, { marketStatus: currentMarketStatus, livePrices: cachedLivePrices, marketInfluence: cachedInfluences, totalTaxCollected, lastTradeTax });
+      await SystemState.updateOne({ key: "main" }, { 
+        marketStatus: currentMarketStatus, 
+        livePrices: cachedLivePrices, 
+        marketInfluence: cachedInfluences, 
+        totalTaxCollected, 
+        lastTradeTax,
+        priceHistory: cachedPriceHistory // <--- ADD THIS LINE
+      });
     } catch (e) {}
   }, 15000);
 }

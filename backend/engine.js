@@ -8,7 +8,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "bazaar_jwt_secure_secret_2026";
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/bazaar";
+const MONGO_URI = process.env.MONGO_URI || "mongodb://bnbbazaar80_db_user:IITivbVAqjrFs3Hi@ac-wbxf7o7-shard-00-00.ywyxh6r.mongodb.net:27017,ac-wbxf7o7-shard-00-01.ywyxh6r.mongodb.net:27017,ac-wbxf7o7-shard-00-02.ywyxh6r.mongodb.net:27017/?ssl=true&replicaSet=atlas-980gau-shard-0&authSource=admin&appName=Cluster0";
 const PORT = process.env.PORT || 8080;
 
 const app = express();

@@ -205,12 +205,18 @@ function startSimulationEngines() {
           });
 
           // 5. Process Subscriptions and Issue Exactly 1 Refund Event per user
+          const processedUIDs = new Set();
           for (let i = 0; i < ipo.subscriptions.length; i++) {
             const sub = ipo.subscriptions[i];
-            const wonLots = winCountsByUID[sub.uid] || 0;
+            const isDuplicateUser = processedUIDs.has(sub.uid);
+            processedUIDs.add(sub.uid);
+
+            const wonLots = isDuplicateUser ? 0 : (winCountsByUID[sub.uid] || 0);
             const allocatedShares = wonLots * lotSize;
             
-            const costBlocked = Number(sub.investedAmount) || 0;
+            // Resilient fallback for costBlocked if investedAmount was missing
+            const fallbackBlocked = (Number(sub.requestedShares) || (Number(sub.requestedLots) * lotSize)) * pricePerShare;
+            const costBlocked = Number(sub.investedAmount) > 0 ? Number(sub.investedAmount) : fallbackBlocked;
             const costUsed = allocatedShares * pricePerShare;
             const refundAmount = Math.max(0, costBlocked - costUsed);
 
@@ -223,17 +229,22 @@ function startSimulationEngines() {
               const u = await User.findOne({ uid: sub.uid });
               if (u) {
                 if (refundAmount > 0) {
-                  u.cashBalance = Number(u.cashBalance) + refundAmount;
+                  u.cashBalance = Number((Number(u.cashBalance || 0) + refundAmount).toFixed(2));
                 }
                 if (allocatedShares > 0) {
+                  u.holdings = u.holdings || [];
                   const existingIdx = u.holdings.findIndex(h => h.ticker === ipo.ticker && h.positionType === "long");
                   if (existingIdx !== -1) {
-                    u.holdings[existingIdx].quantity += allocatedShares;
+                    const prevQty = Number(u.holdings[existingIdx].quantity) || 0;
+                    const prevAvg = Number(u.holdings[existingIdx].avgPrice) || pricePerShare;
+                    const totalQty = prevQty + allocatedShares;
+                    u.holdings[existingIdx].avgPrice = totalQty > 0 ? Number((((prevQty * prevAvg) + costUsed) / totalQty).toFixed(2)) : pricePerShare;
+                    u.holdings[existingIdx].quantity = totalQty;
                   } else {
                     u.holdings.push({ ticker: ipo.ticker, positionType: "long", quantity: allocatedShares, avgPrice: pricePerShare });
                   }
+                  u.markModified("holdings");
                 }
-                u.markModified("holdings"); // Force Mongoose to save the holding changes
                 await u.save();
                 io.emit(`userUpdate:${sub.uid}`, { cashBalance: u.cashBalance, holdings: u.holdings });
               }
@@ -241,9 +252,6 @@ function startSimulationEngines() {
           }
 
           ipo.markModified("subscriptions"); // Force Mongoose to save subscription changes
-          await ipo.save();
-          io.emit("newsUpdate", { type: "allotted", ipo: ipo.ticker });
-
           await ipo.save();
           io.emit("newsUpdate", { type: "allotted", ipo: ipo.ticker });
         }
@@ -685,6 +693,7 @@ app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, contex
     });
   }
 
+  ipo.markModified("subscriptions"); // Force Mongoose to save subscription changes
   ipo.totalSubscribedLots = (ipo.totalSubscribedLots || 0) + lotsToAdd;
   ipo.totalSubscribedShares = (ipo.totalSubscribedShares || 0) + qty;
   ipo.subscriptionCount = ipo.subscriptions.length;
@@ -816,10 +825,12 @@ app.post('/api/adminDeleteIPO', authMiddleware, verifyAdmin, handleCallable(asyn
 
   if (ipo.status !== "listed" && ipo.subscriptions) {
     for (const sub of ipo.subscriptions) {
-      if (!['won', 'lost', 'refunded', 'success'].includes(sub.status) && (sub.investedAmount || 0) > 0) {
+      const fallbackCost = (Number(sub.requestedShares) || (Number(sub.requestedLots) * (Number(ipo.lotSize) || 1))) * (Number(ipo.price) || 0);
+      const refund = Number(sub.investedAmount) > 0 ? Number(sub.investedAmount) : fallbackCost;
+      if (!['won', 'lost', 'refunded', 'success'].includes(sub.status) && refund > 0) {
         const u = await User.findOne({ uid: sub.uid });
         if (u) {
-          u.cashBalance += Number(sub.investedAmount);
+          u.cashBalance = Number((Number(u.cashBalance || 0) + refund).toFixed(2));
           await u.save();
           io.emit(`userUpdate:${sub.uid}`, { cashBalance: u.cashBalance, holdings: u.holdings });
         }

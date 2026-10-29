@@ -1981,22 +1981,32 @@ const handleSendAllCredentials = async () => {
                                   <div className="pl-4 border-l-2 border-[#3b82f6] text-[10px] space-y-1">
                                     <div className="font-bold text-[var(--text-main)] uppercase tracking-wider mb-2">Allotment Breakdown ({ipo.subscriptions.length} Applications)</div>
                                     <div className="max-h-32 overflow-y-auto pr-2 scrollbar-thin">
-                                      {ipo.subscriptions.map((sub: any, i: number) => {
-                                        const trader = users.find(u => u.uid === sub.uid);
-                                        const traderName = trader ? trader.email.split('@')[0] : sub.uid.slice(-6);
-                                        const won = Number(sub.allocatedLots) > 0;
-                                        return (
-                                          <div key={i} className="flex items-center justify-between py-1 border-b border-[var(--border-subtle)] last:border-0">
-                                            <span className="text-[var(--text-muted)] font-mono">{traderName}</span>
-                                            <div className="flex items-center gap-3">
-                                              <span className="text-[var(--text-main)] font-bold">Applied: {sub.requestedLots || 1} lot(s)</span>
-                                              <span className={`font-bold w-24 text-right ${won ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
-                                                {won ? `WON ${sub.allocatedLots} LOT(S)` : '0 LOTS (REFUND)'}
-                                              </span>
+                                      {(() => {
+                                        const groupedSubs: Record<string, { uid: string; requestedLots: number; allocatedLots: number }> = {};
+                                        (ipo.subscriptions || []).forEach((sub: any) => {
+                                          if (!groupedSubs[sub.uid]) {
+                                            groupedSubs[sub.uid] = { uid: sub.uid, requestedLots: 0, allocatedLots: 0 };
+                                          }
+                                          groupedSubs[sub.uid].requestedLots += (Number(sub.requestedLots) || 1);
+                                          groupedSubs[sub.uid].allocatedLots += (Number(sub.allocatedLots) || 0);
+                                        });
+                                        return Object.values(groupedSubs).map((agg: any, i: number) => {
+                                          const trader = users.find(u => u.uid === agg.uid);
+                                          const traderName = trader ? trader.email.split('@')[0] : agg.uid.slice(-6);
+                                          const won = Number(agg.allocatedLots) > 0;
+                                          return (
+                                            <div key={i} className="flex items-center justify-between py-1 border-b border-[var(--border-subtle)] last:border-0">
+                                              <span className="text-[var(--text-muted)] font-mono">{traderName}</span>
+                                              <div className="flex items-center gap-3">
+                                                <span className="text-[var(--text-main)] font-bold">Applied: {agg.requestedLots} lot(s)</span>
+                                                <span className={`font-bold w-24 text-right ${won ? 'text-[var(--up-color)]' : 'text-[var(--down-color)]'}`}>
+                                                  {won ? `WON ${agg.allocatedLots} LOT(S)` : '0 LOTS (REFUND)'}
+                                                </span>
+                                              </div>
                                             </div>
-                                          </div>
-                                        )
-                                      })}
+                                          );
+                                        });
+                                      })()}
                                     </div>
                                   </div>
                                 </td>

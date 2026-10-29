@@ -143,8 +143,14 @@ export default function IPO() {
             const estListingPrice = Math.max(0.01, price * (1 + gmp / 100)); // Clamp at 0.01
             const subscriptionRate = ipo.subscriptionRate !== undefined ? Number(ipo.subscriptionRate) : Number(((Number(ipo.totalSubscribedLots) || 0) / (Number(ipo.totalLots) || 1)).toFixed(2));
             
-            const mySub = ipo.subscriptions?.find((s: any) => s.uid === user?.uid);
-            const hasApplied = !!mySub;
+            const userSubs = (ipo.subscriptions || []).filter((s: any) => s.uid === user?.uid);
+            const hasApplied = userSubs.length > 0;
+            const totalRequestedLots = userSubs.reduce((sum: number, s: any) => sum + (Number(s.requestedLots) || 1), 0);
+            const totalRequestedShares = userSubs.reduce((sum: number, s: any) => sum + (Number(s.requestedShares) || ((Number(s.requestedLots) || 1) * lotSize)), 0);
+            const totalAllocatedLots = userSubs.reduce((sum: number, s: any) => sum + (Number(s.allocatedLots) || 0), 0);
+            const totalAllocatedShares = userSubs.reduce((sum: number, s: any) => sum + (Number(s.allocatedShares) || 0), 0);
+            const totalRefundedAmount = userSubs.reduce((sum: number, s: any) => sum + (Number(s.refundedAmount) || 0), 0);
+            const totalInvestedAmount = userSubs.reduce((sum: number, s: any) => sum + (Number(s.investedAmount) || 0), 0);
 
             return (
               <div key={ipoId} className="terminal-card flex flex-col justify-between p-5 space-y-4">
@@ -249,20 +255,20 @@ export default function IPO() {
                     <div className="p-3 bg-[var(--bg-root)] border border-[var(--border-subtle)] rounded font-mono space-y-2">
                       <div className="flex items-center justify-between text-[10px] uppercase text-[var(--text-muted)] border-b border-dashed border-[var(--border-subtle)] pb-1.5">
                         <span>Your Application</span>
-                        <span className="text-[var(--text-main)] font-bold">{mySub.requestedLots || 1} Lot(s) ({mySub.requestedShares || (mySub.requestedLots * lotSize)} shares)</span>
+                        <span className="text-[var(--text-main)] font-bold">{totalRequestedLots} Lot(s) ({totalRequestedShares} shares)</span>
                       </div>
 
                       {ipo.status === 'allotted' || ipo.status === 'listed' ? (
-                        Number(mySub.allocatedLots) > 0 || Number(mySub.allocatedShares) > 0 ? (
+                        totalAllocatedLots > 0 || totalAllocatedShares > 0 ? (
                           <div className="space-y-1">
                             <div className="text-[11px] font-bold text-[var(--up-color)] flex items-center gap-1.5">
                               <CheckCircle className="w-3.5 h-3.5 text-[var(--up-color)]" />
-                              <span>Allotted {mySub.allocatedLots ?? Math.floor(Number(mySub.allocatedShares) / lotSize)} of {mySub.requestedLots || 1} Lots!</span>
+                              <span>Allotted {totalAllocatedLots} of {totalRequestedLots} Lots!</span>
                             </div>
                             <div className="text-[10px] text-[var(--text-muted)] space-y-0.5 pl-5">
-                              <div>Shares Credited: <strong className="text-[var(--text-main)]">{mySub.allocatedShares} shares</strong></div>
-                              {Number(mySub.refundedAmount) > 0 && (
-                                <div className="text-[#3b82f6]">Refund: ₹{Number(mySub.refundedAmount).toFixed(2)} refunded to cash</div>
+                              <div>Shares Credited: <strong className="text-[var(--text-main)]">{totalAllocatedShares} shares</strong></div>
+                              {totalRefundedAmount > 0 && (
+                                <div className="text-[#3b82f6]">Refund: ₹{totalRefundedAmount.toFixed(2)} refunded to cash</div>
                               )}
                             </div>
                           </div>
@@ -273,7 +279,7 @@ export default function IPO() {
                               <span>0 Lots Allotted</span>
                             </div>
                             <div className="text-[10px] text-[#3b82f6] pl-5">
-                              100% Refund: ₹{Number(mySub.refundedAmount || mySub.investedAmount || 0).toFixed(2)} credited back to Cash
+                              100% Refund: ₹{(totalRefundedAmount || totalInvestedAmount).toFixed(2)} credited back to Cash
                             </div>
                           </div>
                         )
@@ -282,7 +288,7 @@ export default function IPO() {
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" /> Application Active
                           </span>
-                          <span className="text-[var(--text-muted)] font-bold">Blocked: ₹{(Number(mySub.investedAmount) || 0).toFixed(2)}</span>
+                          <span className="text-[var(--text-muted)] font-bold">Blocked: ₹{totalInvestedAmount.toFixed(2)}</span>
                         </div>
                       )}
                     </div>

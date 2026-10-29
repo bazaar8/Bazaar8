@@ -86,13 +86,13 @@ export default function Portfolio() {
           let totalBlocked = 0;
 
           activeIpos.forEach((ipo: any) => {
-            const mySub = ipo.subscriptions?.find((s: any) => s.uid === profile.uid);
-            if (mySub && !['won', 'lost', 'success', 'refunded'].includes(mySub.status)) {
+            const userSubs = (ipo.subscriptions || []).filter((s: any) => s.uid === profile.uid && !s.settled && !['won', 'lost', 'success', 'refunded'].includes(s.status));
+            userSubs.forEach((mySub: any) => {
               const price = Number(ipo.price) || 0;
               const lotSize = Number(ipo.lotSize) || 1;
               const reqLots = Number(mySub.requestedLots) || Math.max(1, Math.floor((Number(mySub.requestedShares) || 1) / lotSize));
               totalBlocked += (reqLots * lotSize * price);
-            }
+            });
           });
           
           setBlockedIpoFunds(totalBlocked);

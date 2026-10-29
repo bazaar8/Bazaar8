@@ -71,12 +71,14 @@ const IPOSchema = new mongoose.Schema({
   openTime: Number, closeTime: Number, listTime: Number,
   triggerAllotment: Boolean, triggerListing: Boolean,
   hasAllotted: { type: Boolean, default: false }, // NEW STRICT LOCK FLAG
+  allotmentResult: { type: Object, default: null },
   subscriptions: [{
     subId: String, uid: String, requestedShares: Number, requestedLots: Number,
     allocatedLots: { type: Number, default: 0 }, allocatedShares: { type: Number, default: 0 },
     investedAmount: Number, refundedAmount: { type: Number, default: 0 },
     status: { type: String, default: "pending" },
-    timestamp: { type: Number, default: Date.now }
+    timestamp: { type: Number, default: Date.now },
+    settled: { type: Boolean, default: false }
   }]
 });
 
@@ -145,134 +147,303 @@ mongoose.connect(MONGO_URI, { maxPoolSize: 20, serverSelectionTimeoutMS: 5000 })
   startSimulationEngines();
 }).catch(err => console.error("MongoDB error:", err.message));
 
+// --- IPO ALLOTMENT HELPERS ---
+async function addLongHolding(uid, ticker, quantity, price) {
+  if (quantity <= 0) return;
+  const res = await User.updateOne(
+    {
+      uid,
+      holdings: { $elemMatch: { ticker, positionType: "long" } }
+    },
+    [
+      {
+        $set: {
+          holdings: {
+            $map: {
+              input: "$holdings",
+              as: "h",
+              in: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$h.ticker", ticker] },
+                      { $eq: ["$h.positionType", "long"] }
+                    ]
+                  },
+                  {
+                    ticker: "$h.ticker",
+                    positionType: "$h.positionType",
+                    quantity: { $add: ["$h.quantity", quantity] },
+                    avgPrice: {
+                      $round: [
+                        {
+                          $divide: [
+                            {
+                              $add: [
+                                { $multiply: ["$h.quantity", "$h.avgPrice"] },
+                                quantity * price
+                              ]
+                            },
+                            { $add: ["$h.quantity", quantity] }
+                          ]
+                        },
+                        2
+                      ]
+                    }
+                  },
+                  "$h"
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
+    { updatePipeline: true }
+  );
+
+  if (res.matchedCount === 0) {
+    await User.updateOne(
+      {
+        uid,
+        holdings: { $not: { $elemMatch: { ticker, positionType: "long" } } }
+      },
+      {
+        $push: {
+          holdings: {
+            ticker,
+            positionType: "long",
+            quantity,
+            avgPrice: price
+          }
+        }
+      }
+    );
+  }
+}
+
+async function settleUid(ipo, uid, wonLots) {
+  const userSubs = (ipo.subscriptions || []).filter(s => s.uid === uid && !s.settled);
+  if (!userSubs.length) return;
+
+  const lotSize = Number(ipo.lotSize) || 1;
+  const price = Number(ipo.price) || 0;
+  let wonLotsRemaining = wonLots;
+
+  const updates = [];
+  let totalUserRefund = 0;
+  let totalAllocatedShares = 0;
+
+  for (const sub of userSubs) {
+    const reqLots = Number(sub.requestedLots) || Math.max(1, Math.floor((Number(sub.requestedShares) || 1) / lotSize));
+    const subAllocLots = Math.min(reqLots, wonLotsRemaining);
+    wonLotsRemaining -= subAllocLots;
+
+    const subAllocShares = subAllocLots * lotSize;
+    const fallbackCost = (Number(sub.requestedShares) || (reqLots * lotSize)) * price;
+    const invested = Number(sub.investedAmount) > 0 ? Number(sub.investedAmount) : fallbackCost;
+    const costUsed = subAllocShares * price;
+    const subRefund = Number(Math.max(0, invested - costUsed).toFixed(2));
+    const subStatus = subAllocLots > 0 ? "won" : "lost";
+
+    totalUserRefund += subRefund;
+    totalAllocatedShares += subAllocShares;
+
+    updates.push({
+      subId: sub.subId,
+      _id: sub._id,
+      allocatedLots: subAllocLots,
+      allocatedShares: subAllocShares,
+      refundedAmount: subRefund,
+      status: subStatus
+    });
+  }
+
+  const setObj = {};
+  const arrayFilters = [];
+  updates.forEach((u, idx) => {
+    setObj[`subscriptions.$[elem${idx}].settled`] = true;
+    setObj[`subscriptions.$[elem${idx}].allocatedLots`] = u.allocatedLots;
+    setObj[`subscriptions.$[elem${idx}].allocatedShares`] = u.allocatedShares;
+    setObj[`subscriptions.$[elem${idx}].refundedAmount`] = u.refundedAmount;
+    setObj[`subscriptions.$[elem${idx}].status`] = u.status;
+
+    const filter = { [`elem${idx}.uid`]: uid, [`elem${idx}.settled`]: { $ne: true } };
+    if (u.subId) {
+      filter[`elem${idx}.subId`] = u.subId;
+    } else if (u._id) {
+      filter[`elem${idx}._id`] = u._id;
+    }
+    arrayFilters.push(filter);
+  });
+
+  const claim = await IPO.updateOne(
+    {
+      _id: ipo._id,
+      subscriptions: { $elemMatch: { uid: uid, settled: { $ne: true } } }
+    },
+    { $set: setObj },
+    { arrayFilters }
+  );
+
+  if (claim.modifiedCount === 0) return;
+
+  totalUserRefund = Number(totalUserRefund.toFixed(2));
+  if (totalUserRefund > 0) {
+    await User.updateOne({ uid }, { $inc: { cashBalance: totalUserRefund } });
+  }
+
+  if (totalAllocatedShares > 0) {
+    await addLongHolding(uid, ipo.ticker, totalAllocatedShares, price);
+  }
+
+  const updatedUser = await User.findOne({ uid }, "cashBalance holdings").lean();
+  io.emit(`userUpdate:${uid}`, { cashBalance: updatedUser?.cashBalance, holdings: updatedUser?.holdings });
+}
+
+async function runAllotment(ipo) {
+  if (!ipo) return;
+
+  const availableLots = Number(ipo.totalLots) || 1;
+  const lotSize = Number(ipo.lotSize) || 1;
+
+  let winCounts = ipo.allotmentResult || null;
+
+  if (!winCounts) {
+    const uidLots = {};
+    for (const sub of (ipo.subscriptions || [])) {
+      const reqLots = Number(sub.requestedLots) || Math.max(1, Math.floor((Number(sub.requestedShares) || 1) / lotSize));
+      uidLots[sub.uid] = (uidLots[sub.uid] || 0) + reqLots;
+    }
+
+    let lotteryPool = [];
+    for (const [uid, lots] of Object.entries(uidLots)) {
+      for (let i = 0; i < lots; i++) {
+        lotteryPool.push(uid);
+      }
+    }
+
+    if (lotteryPool.length > availableLots) {
+      for (let i = lotteryPool.length - 1; i > 0; i--) {
+        const j = crypto.randomInt(0, i + 1);
+        [lotteryPool[i], lotteryPool[j]] = [lotteryPool[j], lotteryPool[i]];
+      }
+    }
+
+    const lotsToAward = Math.min(lotteryPool.length, availableLots);
+    winCounts = {};
+    lotteryPool.slice(0, lotsToAward).forEach(winnerUID => {
+      winCounts[winnerUID] = (winCounts[winnerUID] || 0) + 1;
+    });
+  }
+
+  let activeIpo = ipo;
+  if (!ipo.hasAllotted) {
+    const claimed = await IPO.findOneAndUpdate(
+      { _id: ipo._id, hasAllotted: { $ne: true } },
+      {
+        $set: {
+          hasAllotted: true,
+          status: "allotted",
+          triggerAllotment: false,
+          allotmentResult: winCounts
+        }
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (claimed) {
+      activeIpo = claimed;
+      io.emit("newsUpdate", { type: "allotted", ipo: activeIpo.ticker });
+    } else {
+      const reloaded = await IPO.findById(ipo._id).lean();
+      if (!reloaded) return;
+      activeIpo = reloaded;
+      winCounts = activeIpo.allotmentResult || winCounts;
+    }
+  }
+
+  const unsettledUids = [
+    ...new Set(
+      (activeIpo.subscriptions || [])
+        .filter(s => !s.settled)
+        .map(s => s.uid)
+    )
+  ];
+
+  for (const uid of unsettledUids) {
+    await settleUid(activeIpo, uid, winCounts[uid] || 0);
+  }
+}
+
 // --- SIMULATION ENGINES ---
 function startSimulationEngines() {
   
   // 1. AUTO-IPO ENGINE
+  let ipoEngineRunning = false;
   setInterval(async () => {
+    if (ipoEngineRunning) return;
+    ipoEngineRunning = true;
     try {
       const now = Date.now();
       const ipos = await IPO.find({ status: { $in: ["upcoming", "open", "closed", "allotted"] } });
 
       for (const ipo of ipos) {
         if (ipo.status === "upcoming" && ipo.openTime && now >= ipo.openTime) {
-          ipo.status = "open"; await ipo.save();
-          await NewsEvent.create({
-            eventId: "news_" + Date.now(), headline: `🚀 New IPO Open: ${ipo.ticker} is now OPEN for bidding at ₹${ipo.price}!`,
-            status: "active", startTime: now, createdAt: now, durationMinutes: 60, targetTickers: [ipo.ticker], impactDirection: "positive"
-          });
-          io.emit("newsUpdate", { type: "new", ipo: ipo.ticker });
+          const opened = await IPO.updateOne({ _id: ipo._id, status: "upcoming" }, { $set: { status: "open" } });
+          if (opened.modifiedCount > 0) {
+            await NewsEvent.create({
+              eventId: "news_" + Date.now(), headline: `🚀 New IPO Open: ${ipo.ticker} is now OPEN for bidding at ₹${ipo.price}!`,
+              status: "active", startTime: now, createdAt: now, durationMinutes: 60, targetTickers: [ipo.ticker], impactDirection: "positive"
+            });
+            io.emit("newsUpdate", { type: "new", ipo: ipo.ticker });
+          }
         }
 
-        const shouldAllot = ipo.triggerAllotment || ((ipo.status === "open" || ipo.status === "closed") && ipo.closeTime && now >= ipo.closeTime);
+        const shouldAllot = (ipo.status === "open" || ipo.status === "closed") && (ipo.triggerAllotment || (ipo.closeTime && now >= ipo.closeTime));
 
-        // ---> STRICT ALLOTMENT LOCK <---
-        if (shouldAllot && ipo.status !== "allotted" && ipo.status !== "listed" && ipo.hasAllotted !== true) {
-          const availableLots = Number(ipo.totalLots) || 1;
-          const lotSize = Number(ipo.lotSize) || 1;
-          const pricePerShare = Number(ipo.price) || 0;
-
-          // 1. Lock the IPO immediately
-          ipo.hasAllotted = true; 
-          ipo.status = "allotted";
-          ipo.triggerAllotment = false;
-
-          if (!ipo.subscriptions || ipo.subscriptions.length === 0) {
-            await ipo.save();
-            continue;
-          }
-
-          // 2. Build a safe UID-based lottery pool
-          let lotteryPool = [];
-          ipo.subscriptions.forEach((sub) => {
-            const reqLots = Number(sub.requestedLots) || Math.max(1, Math.floor((Number(sub.requestedShares) || 1) / lotSize));
-            for (let i = 0; i < reqLots; i++) {
-              lotteryPool.push(sub.uid); 
-            }
-          });
-
-          // 3. Cryptographic shuffle
-          for (let i = lotteryPool.length - 1; i > 0; i--) {
-            const j = crypto.randomInt(0, i + 1);
-            [lotteryPool[i], lotteryPool[j]] = [lotteryPool[j], lotteryPool[i]];
-          }
-
-          // 4. Distribute Lots safely via UID
-          const lotsToAward = Math.min(lotteryPool.length, availableLots);
-          const winCountsByUID = {};
-          lotteryPool.slice(0, lotsToAward).forEach(winnerUID => {
-            winCountsByUID[winnerUID] = (winCountsByUID[winnerUID] || 0) + 1;
-          });
-
-          // 5. Process Subscriptions and Issue Exactly 1 Refund Event per user
-          const processedUIDs = new Set();
-          for (let i = 0; i < ipo.subscriptions.length; i++) {
-            const sub = ipo.subscriptions[i];
-            const isDuplicateUser = processedUIDs.has(sub.uid);
-            processedUIDs.add(sub.uid);
-
-            const wonLots = isDuplicateUser ? 0 : (winCountsByUID[sub.uid] || 0);
-            const allocatedShares = wonLots * lotSize;
-            
-            // Resilient fallback for costBlocked if investedAmount was missing
-            const fallbackBlocked = (Number(sub.requestedShares) || (Number(sub.requestedLots) * lotSize)) * pricePerShare;
-            const costBlocked = Number(sub.investedAmount) > 0 ? Number(sub.investedAmount) : fallbackBlocked;
-            const costUsed = allocatedShares * pricePerShare;
-            const refundAmount = Math.max(0, costBlocked - costUsed);
-
-            sub.allocatedLots = wonLots; 
-            sub.allocatedShares = allocatedShares;
-            sub.status = wonLots > 0 ? "won" : "lost"; 
-            sub.refundedAmount = refundAmount;
-
-            if (refundAmount > 0 || allocatedShares > 0) {
-              const u = await User.findOne({ uid: sub.uid });
-              if (u) {
-                if (refundAmount > 0) {
-                  u.cashBalance = Number((Number(u.cashBalance || 0) + refundAmount).toFixed(2));
-                }
-                if (allocatedShares > 0) {
-                  u.holdings = u.holdings || [];
-                  const existingIdx = u.holdings.findIndex(h => h.ticker === ipo.ticker && h.positionType === "long");
-                  if (existingIdx !== -1) {
-                    const prevQty = Number(u.holdings[existingIdx].quantity) || 0;
-                    const prevAvg = Number(u.holdings[existingIdx].avgPrice) || pricePerShare;
-                    const totalQty = prevQty + allocatedShares;
-                    u.holdings[existingIdx].avgPrice = totalQty > 0 ? Number((((prevQty * prevAvg) + costUsed) / totalQty).toFixed(2)) : pricePerShare;
-                    u.holdings[existingIdx].quantity = totalQty;
-                  } else {
-                    u.holdings.push({ ticker: ipo.ticker, positionType: "long", quantity: allocatedShares, avgPrice: pricePerShare });
-                  }
-                  u.markModified("holdings");
-                }
-                await u.save();
-                io.emit(`userUpdate:${sub.uid}`, { cashBalance: u.cashBalance, holdings: u.holdings });
-              }
-            }
-          }
-
-          ipo.markModified("subscriptions"); // Force Mongoose to save subscription changes
-          await ipo.save();
-          io.emit("newsUpdate", { type: "allotted", ipo: ipo.ticker });
+        if (shouldAllot) {
+          await runAllotment(ipo);
+        } else if (ipo.status === "allotted" && (ipo.subscriptions || []).some(s => !s.settled)) {
+          await runAllotment(ipo);
         }
 
-        if ((ipo.status === "allotted" && ipo.listTime && now >= ipo.listTime) || ipo.triggerListing) {
-          const rawListingPrice = Number(ipo.price) * (1 + ((Number(ipo.listingPremiumPct) || 0) / 100));
-          const listingPrice = Math.max(0.01, Number(rawListingPrice.toFixed(2))); 
+        if (ipo.status === "allotted" && ((ipo.listTime && now >= ipo.listTime) || ipo.triggerListing)) {
+          const claimedListing = await IPO.findOneAndUpdate(
+            { _id: ipo._id, status: "allotted" },
+            { $set: { status: "listed", triggerListing: false } },
+            { returnDocument: 'after' }
+          );
 
-          ipo.status = "listed"; ipo.triggerListing = false; await ipo.save();
+          if (claimedListing) {
+            const rawListingPrice = Number(claimedListing.price) * (1 + ((Number(claimedListing.listingPremiumPct) || 0) / 100));
+            const listingPrice = Math.max(0.01, Number(rawListingPrice.toFixed(2)));
 
-          cachedLivePrices[ipo.ticker] = {
-            ticker: ipo.ticker, name: ipo.name || ipo.ticker, sector: ipo.sector || "IPO",
-            price: listingPrice, basePrice: listingPrice, high: listingPrice, low: listingPrice, volatility: 0.008, isIPO: true, timestamp: now
-          };
+            if (!cachedLivePrices[claimedListing.ticker]) {
+              cachedLivePrices[claimedListing.ticker] = {
+                ticker: claimedListing.ticker, name: claimedListing.name || claimedListing.ticker, sector: claimedListing.sector || "IPO",
+                price: listingPrice, basePrice: listingPrice, high: listingPrice, low: listingPrice, volatility: 0.008, isIPO: true, timestamp: now
+              };
+            }
+            await SystemState.updateOne({}, { livePrices: cachedLivePrices });
 
-          io.emit("newsUpdate", { type: "listed", ipo: ipo.ticker });
-          io.emit("livePrices", { prices: cachedLivePrices, marketStatus: currentMarketStatus });
+            await NewsEvent.create({
+              eventId: "news_" + Date.now(),
+              headline: `🚀 IPO Listed: ${claimedListing.ticker} (${claimedListing.name || claimedListing.ticker}) listed at ₹${listingPrice.toFixed(2)} and is now LIVE for trading!`,
+              status: "active", startTime: now, createdAt: now, durationMinutes: 60, targetTickers: [claimedListing.ticker],
+              impactDirection: listingPrice >= Number(claimedListing.price) ? "positive" : "negative"
+            });
+
+            io.emit("ipoUpdate", { ipoId: claimedListing.ipoId, status: "listed" });
+            io.emit("newsUpdate", { type: "listed", ipo: claimedListing.ticker });
+            io.emit("livePrices", { prices: cachedLivePrices, marketStatus: currentMarketStatus });
+          }
         }
       }
     } catch (e) {
       console.error("Auto-IPO Engine Error:", e.message);
+    } finally {
+      ipoEngineRunning = false;
     }
   }, 3000);
 
@@ -297,12 +468,12 @@ function startSimulationEngines() {
         });
 
         activeIpos.forEach(ipo => {
-          const mySub = (ipo.subscriptions || []).find(s => s.uid === user.uid);
-          if (mySub && !['won', 'lost', 'success', 'refunded'].includes(mySub.status)) {
+          const userSubs = (ipo.subscriptions || []).filter(s => s.uid === user.uid && !s.settled && !['won', 'lost', 'success', 'refunded'].includes(s.status));
+          userSubs.forEach(mySub => {
             const price = Number(ipo.price) || 0; const lotSize = Number(ipo.lotSize) || 1;
             const reqLots = Number(mySub.requestedLots) || Math.max(1, Math.floor((Number(mySub.requestedShares) || 1) / lotSize));
             blockedIpoFunds += (reqLots * lotSize * price);
-          }
+          });
         });
 
         const startingCapital = Number(user.startingBalance) || 1000000;
@@ -318,7 +489,9 @@ function startSimulationEngines() {
       leaderboard.sort((a, b) => b.portfolioValue - a.portfolioValue);
       cachedRankings = leaderboard.map((entry, index) => ({ ...entry, rank: index + 1 }));
       io.emit("leaderboard", cachedRankings);
-    } catch (e) {}
+    } catch (e) {
+      console.error("Leaderboard calculation error:", e.message);
+    }
   }, 6000);
 
   const TICK_INTERVAL_MS = 500;
@@ -667,40 +840,84 @@ app.post('/api/executeTrade', authMiddleware, handleCallable(async (data, contex
 app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, context) => {
   if (!context.auth) throw new Error("User not logged in");
   const uid = context.auth.uid;
-  const qty = parseInt(data.requestedShares, 10);
-  if (isNaN(qty) || qty <= 0) throw new Error("Quantity must be positive");
 
-  const ipo = await IPO.findOne({ ipoId: data.ipoId });
+  const ipoQuery = mongoose.isValidObjectId(data.ipoId) ? { $or: [{ ipoId: data.ipoId }, { _id: data.ipoId }] } : { ipoId: data.ipoId };
+  const ipo = await IPO.findOne(ipoQuery);
   if (!ipo || ipo.status !== "open") throw new Error("IPO is not open for bidding");
 
-  const cost = qty * Number(ipo.price);
-  const user = await User.findOne({ uid });
-  if (user.cashBalance < cost) throw new Error(`Insufficient balance: You need ₹${cost.toLocaleString("en-IN")}, but your available cash is ₹${user.cashBalance.toLocaleString("en-IN")}`);
+  const lotSize = Number(ipo.lotSize) || 1;
+  const totalLots = Number(ipo.totalLots) || 1;
+  const price = Number(ipo.price) || 0;
 
-  const lotsToAdd = parseInt(data.requestedLots, 10) || Math.max(1, Math.floor(qty / (Number(ipo.lotSize) || 1)));
-  user.cashBalance -= cost;
-  await user.save();
-
-  const existingSub = ipo.subscriptions.find(s => s.uid === uid);
-  if (existingSub) {
-    existingSub.requestedShares += qty;
-    existingSub.requestedLots = (existingSub.requestedLots || 0) + lotsToAdd;
-    existingSub.investedAmount = (existingSub.investedAmount || 0) + cost;
-  } else {
-    ipo.subscriptions.push({
-      subId: "sub_" + Date.now(), uid, requestedShares: qty, requestedLots: lotsToAdd,
-      allocatedShares: 0, allocatedLots: 0, investedAmount: cost
-    });
+  const requestedLots = parseInt(data.requestedLots, 10);
+  if (isNaN(requestedLots) || requestedLots < 1 || requestedLots > totalLots) {
+    throw new Error(`Requested lots must be an integer between 1 and ${totalLots}`);
   }
 
-  ipo.markModified("subscriptions"); // Force Mongoose to save subscription changes
-  ipo.totalSubscribedLots = (ipo.totalSubscribedLots || 0) + lotsToAdd;
-  ipo.totalSubscribedShares = (ipo.totalSubscribedShares || 0) + qty;
-  ipo.subscriptionCount = ipo.subscriptions.length;
-  ipo.subscriptionRate = Number((ipo.totalSubscribedLots / (Number(ipo.totalLots) || 1)).toFixed(2));
-  await ipo.save();
+  const requestedShares = requestedLots * lotSize;
+  const cost = requestedShares * price;
 
-  io.emit(`userUpdate:${uid}`, { cashBalance: user.cashBalance });
+  const userCheck = await User.findOne({ uid }, "isFrozen cashBalance").lean();
+  if (!userCheck) throw new Error("User not found");
+  if (userCheck.isFrozen) throw new Error("Account is frozen. Bidding disabled.");
+  if ((Number(userCheck.cashBalance) || 0) < cost) {
+    throw new Error(`Insufficient balance: You need ₹${cost.toLocaleString("en-IN")}, but your available cash is ₹${(Number(userCheck.cashBalance) || 0).toLocaleString("en-IN")}`);
+  }
+
+  // Atomic cash deduction
+  const deductRes = await User.updateOne(
+    { uid, cashBalance: { $gte: cost }, isFrozen: { $ne: true } },
+    { $inc: { cashBalance: -cost } }
+  );
+  if (deductRes.matchedCount === 0 || deductRes.modifiedCount === 0) {
+    throw new Error("Insufficient cash balance or account is frozen");
+  }
+
+  const subData = {
+    subId: "sub_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
+    uid,
+    requestedShares,
+    requestedLots,
+    allocatedShares: 0,
+    allocatedLots: 0,
+    investedAmount: cost,
+    refundedAmount: 0,
+    status: "pending",
+    timestamp: Date.now(),
+    settled: false
+  };
+
+  let pushRes;
+  try {
+    pushRes = await IPO.updateOne(
+      { _id: ipo._id, status: "open", "subscriptions.uid": { $ne: uid } },
+      {
+        $push: { subscriptions: subData },
+        $inc: {
+          totalSubscribedLots: requestedLots,
+          totalSubscribedShares: requestedShares,
+          subscriptionCount: 1
+        }
+      }
+    );
+  } catch (err) {
+    await User.updateOne({ uid }, { $inc: { cashBalance: cost } });
+    throw err;
+  }
+
+  if (pushRes.matchedCount === 0 || pushRes.modifiedCount === 0) {
+    await User.updateOne({ uid }, { $inc: { cashBalance: cost } });
+    throw new Error("Subscription failed: IPO is no longer open or you have already subscribed");
+  }
+
+  const updatedIpo = await IPO.findById(ipo._id, "totalSubscribedLots totalLots").lean();
+  if (updatedIpo) {
+    const subRate = Number(((Number(updatedIpo.totalSubscribedLots) || 0) / (Number(updatedIpo.totalLots) || 1)).toFixed(2));
+    await IPO.updateOne({ _id: ipo._id }, { $set: { subscriptionRate: subRate } });
+  }
+
+  const updatedUser = await User.findOne({ uid }, "cashBalance").lean();
+  io.emit(`userUpdate:${uid}`, { cashBalance: updatedUser?.cashBalance });
   return { success: true };
 }));
 
@@ -804,17 +1021,39 @@ app.post('/api/adminImportNews', authMiddleware, verifyAdmin, handleCallable(asy
 }));
 
 app.post('/api/adminCreateIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
+  const ticker = data.ticker?.trim().toUpperCase();
+  if (!ticker) throw new Error("Ticker is required");
+
+  const existingIPO = await IPO.findOne({ ticker });
+  if (existingIPO) throw new Error("An IPO with this ticker already exists");
+  if (cachedLivePrices[ticker]) throw new Error("A stock with this ticker already exists in the market");
+
+  const price = Number(data.price);
+  const lotSize = parseInt(data.lotSize, 10);
+  const totalLots = parseInt(data.totalLots, 10);
+  if (isNaN(price) || price <= 0) throw new Error("Price must be a positive number");
+  if (isNaN(lotSize) || lotSize < 1) throw new Error("Lot size must be a positive integer");
+  if (isNaN(totalLots) || totalLots < 1) throw new Error("Total lots must be a positive integer");
+
+  const openTime = Number(data.openTime);
+  const closeTime = Number(data.closeTime);
+  const listTime = Number(data.listTime);
+  if (!openTime || !closeTime || !listTime || !(openTime < closeTime && closeTime < listTime)) {
+    throw new Error("Invalid schedule: openTime must be before closeTime, and closeTime before listTime");
+  }
+
   await IPO.create({
-    ipoId: "ipo_" + Date.now(), name: data.name, ticker: data.ticker, price: data.price, lotSize: data.lotSize,
-    totalLots: data.totalLots, listingPremiumPct: data.listingPremiumPct, sector: data.sector || "Upcoming",
-    status: "upcoming", openTime: data.openTime, closeTime: data.closeTime, listTime: data.listTime
+    ipoId: "ipo_" + Date.now(), name: data.name || ticker, ticker, price, lotSize,
+    totalLots, listingPremiumPct: Number(data.listingPremiumPct) || 0, sector: data.sector || "Upcoming",
+    status: "upcoming", openTime, closeTime, listTime
   });
   return { success: true };
 }));
 
 app.post('/api/adminCloseIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
   const query = mongoose.isValidObjectId(data.ipoId) ? { $or: [{ ipoId: data.ipoId }, { _id: data.ipoId }] } : { ipoId: data.ipoId };
-  await IPO.updateOne(query, { status: "closed" });
+  const res = await IPO.updateOne({ ...query, status: "open" }, { $set: { status: "closed" } });
+  if (res.matchedCount === 0) throw new Error("IPO not found or not in open status");
   return { success: true };
 }));
 
@@ -823,50 +1062,71 @@ app.post('/api/adminDeleteIPO', authMiddleware, verifyAdmin, handleCallable(asyn
   const ipo = await IPO.findOne(query);
   if (!ipo) throw new Error("IPO not found");
 
-  if (ipo.status !== "listed" && ipo.subscriptions) {
+  if (['allotted', 'listed'].includes(ipo.status)) {
+    throw new Error("Cannot delete an IPO that is already allotted or listed");
+  }
+
+  if (ipo.subscriptions && ipo.subscriptions.length > 0) {
+    const userRefunds = {};
     for (const sub of ipo.subscriptions) {
-      const fallbackCost = (Number(sub.requestedShares) || (Number(sub.requestedLots) * (Number(ipo.lotSize) || 1))) * (Number(ipo.price) || 0);
-      const refund = Number(sub.investedAmount) > 0 ? Number(sub.investedAmount) : fallbackCost;
-      if (!['won', 'lost', 'refunded', 'success'].includes(sub.status) && refund > 0) {
-        const u = await User.findOne({ uid: sub.uid });
-        if (u) {
-          u.cashBalance = Number((Number(u.cashBalance || 0) + refund).toFixed(2));
-          await u.save();
-          io.emit(`userUpdate:${sub.uid}`, { cashBalance: u.cashBalance, holdings: u.holdings });
+      if (!['won', 'lost', 'refunded', 'success'].includes(sub.status) && !sub.settled) {
+        const fallbackCost = (Number(sub.requestedShares) || (Number(sub.requestedLots) * (Number(ipo.lotSize) || 1))) * (Number(ipo.price) || 0);
+        const refund = Number(sub.investedAmount) > 0 ? Number(sub.investedAmount) : fallbackCost;
+        if (refund > 0) {
+          userRefunds[sub.uid] = (userRefunds[sub.uid] || 0) + refund;
         }
       }
     }
+
+    for (const [uid, refund] of Object.entries(userRefunds)) {
+      const roundedRefund = Number(refund.toFixed(2));
+      await User.updateOne({ uid }, { $inc: { cashBalance: roundedRefund } });
+      const u = await User.findOne({ uid }, "cashBalance holdings").lean();
+      io.emit(`userUpdate:${uid}`, { cashBalance: u?.cashBalance, holdings: u?.holdings });
+    }
   }
+
   await IPO.deleteOne(query);
   return { success: true };
 }));
 
 app.post('/api/adminUpdateIPOGMP', authMiddleware, verifyAdmin, handleCallable(async (data) => {
-  await IPO.updateOne({ ipoId: data.ipoId }, { listingPremiumPct: Number(data.listingPremiumPct) || 0 });
+  const query = mongoose.isValidObjectId(data.ipoId) ? { $or: [{ ipoId: data.ipoId }, { _id: data.ipoId }] } : { ipoId: data.ipoId };
+  const ipo = await IPO.findOne(query);
+  if (!ipo) throw new Error("IPO not found");
+  if (ipo.status === "listed") throw new Error("Cannot update GMP of a listed IPO");
+
+  await IPO.updateOne(query, { $set: { listingPremiumPct: Number(data.listingPremiumPct) || 0 } });
   return { success: true };
 }));
 
 app.post('/api/processAllotment', authMiddleware, verifyAdmin, handleCallable(async (data) => {
   const query = mongoose.isValidObjectId(data.ipoId) ? { $or: [{ ipoId: data.ipoId }, { _id: data.ipoId }] } : { ipoId: data.ipoId };
-  await IPO.updateOne(query, { triggerAllotment: true });
+  const res = await IPO.updateOne({ ...query, status: { $in: ["open", "closed"] } }, { $set: { triggerAllotment: true } });
+  if (res.matchedCount === 0) throw new Error("IPO not found or not in open/closed status for allotment");
   return { success: true };
 }));
 
 app.post('/api/listIPO', authMiddleware, verifyAdmin, handleCallable(async (data) => {
   const query = mongoose.isValidObjectId(data.ipoId) ? { $or: [{ ipoId: data.ipoId }, { _id: data.ipoId }] } : { ipoId: data.ipoId };
-  const ipo = await IPO.findOne(query);
-  if (!ipo) throw new Error("IPO not found");
+  const ipo = await IPO.findOneAndUpdate(
+    { ...query, status: "allotted" },
+    { $set: { status: "listed", triggerListing: false } },
+    { returnDocument: 'after' }
+  );
+  if (!ipo) throw new Error("IPO not found or not in allotted status");
 
   const now = Date.now();
   const rawListingPrice = Number(ipo.price) * (1 + ((Number(ipo.listingPremiumPct) || 0) / 100));
   const listingPrice = Math.max(0.01, Number(rawListingPrice.toFixed(2)));
-  
-  ipo.status = "listed"; ipo.triggerListing = false; await ipo.save();
 
-  cachedLivePrices[ipo.ticker] = {
-    ticker: ipo.ticker, name: ipo.name || ipo.ticker, sector: ipo.sector || "IPO",
-    price: listingPrice, basePrice: listingPrice, high: listingPrice, low: listingPrice, volatility: 0.008, isIPO: true, timestamp: now
-  };
+  if (!cachedLivePrices[ipo.ticker]) {
+    cachedLivePrices[ipo.ticker] = {
+      ticker: ipo.ticker, name: ipo.name || ipo.ticker, sector: ipo.sector || "IPO",
+      price: listingPrice, basePrice: listingPrice, high: listingPrice, low: listingPrice, volatility: 0.008, isIPO: true, timestamp: now
+    };
+  }
+  await SystemState.updateOne({}, { livePrices: cachedLivePrices });
 
   await NewsEvent.create({
     eventId: "news_" + Date.now(),
@@ -875,6 +1135,7 @@ app.post('/api/listIPO', authMiddleware, verifyAdmin, handleCallable(async (data
     impactDirection: listingPrice >= Number(ipo.price) ? "positive" : "negative"
   });
 
+  io.emit("ipoUpdate", { ipoId: ipo.ipoId, status: "listed" });
   io.emit("newsUpdate", { type: "listed", ipo: ipo.ticker });
   io.emit("livePrices", { prices: cachedLivePrices, marketStatus: currentMarketStatus });
 

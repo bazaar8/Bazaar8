@@ -24,7 +24,7 @@ import { STOCKS_CATALOG } from "../data/stocksData";
 
 type Tab = 'dashboard' | 'market' | 'participants' | 'stocks' | 'logs' | 'news' | 'ipo';
 
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbySW4jPy7NI6W7ubVAIAIpZRqghTAgE_0WSRwDSDjz7NKRkmsdb7p-gLUslqDVgasCWig/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz-RO40PA267v81PN3Z5aKsJChEHuJQhZ2qQ3fhhzEKNvuXYRVvs2qmj4Af9rWojSgN/exec";
 const APPS_SCRIPT_SECRET = "Bazaar Is Great";
 
 const generatePassword = () => {

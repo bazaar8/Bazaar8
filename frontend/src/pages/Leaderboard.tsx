@@ -7,10 +7,7 @@ import {
   Crown, 
   Shield, 
   Flame, 
-  Search, 
-  Zap, 
-  Activity, 
-  Users,
+  Search,
   Crosshair,
   LayoutGrid,
   List

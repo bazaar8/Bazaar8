@@ -166,32 +166,32 @@ async function addLongHolding(uid, ticker, quantity, price) {
                 $cond: [
                   {
                     $and: [
-                      { $eq: ["$h.ticker", ticker] },
-                      { $eq: ["$h.positionType", "long"] }
+                      { $eq: ["$$h.ticker", ticker] },
+                      { $eq: ["$$h.positionType", "long"] }
                     ]
                   },
                   {
-                    ticker: "$h.ticker",
-                    positionType: "$h.positionType",
-                    quantity: { $add: ["$h.quantity", quantity] },
+                    ticker: "$$h.ticker",
+                    positionType: "$$h.positionType",
+                    quantity: { $add: ["$$h.quantity", quantity] },
                     avgPrice: {
                       $round: [
                         {
                           $divide: [
                             {
                               $add: [
-                                { $multiply: ["$h.quantity", "$h.avgPrice"] },
+                                { $multiply: ["$$h.quantity", "$$h.avgPrice"] },
                                 quantity * price
                               ]
                             },
-                            { $add: ["$h.quantity", quantity] }
+                            { $add: ["$$h.quantity", quantity] }
                           ]
                         },
                         2
                       ]
                     }
                   },
-                  "$h"
+                  "$$h"
                 ]
               }
             }
@@ -849,12 +849,15 @@ app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, contex
   const totalLots = Number(ipo.totalLots) || 1;
   const price = Number(ipo.price) || 0;
 
-  const requestedLots = parseInt(data.requestedLots, 10);
-  if (isNaN(requestedLots) || requestedLots < 1 || requestedLots > totalLots) {
-    throw new Error(`Requested lots must be an integer between 1 and ${totalLots}`);
+  const lots = Number(data.requestedLots);
+  if (!Number.isInteger(lots) || lots < 1 || lots > totalLots) {
+    throw new Error("Invalid lots");
   }
 
-  const requestedShares = requestedLots * lotSize;
+  const requestedShares = lots * lotSize;
+  if (data.requestedShares !== undefined && Number(data.requestedShares) !== requestedShares) {
+    throw new Error(`Requested shares must match requested lots * lot size (${requestedShares})`);
+  }
   const cost = requestedShares * price;
 
   const userCheck = await User.findOne({ uid }, "isFrozen cashBalance").lean();
@@ -864,20 +867,20 @@ app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, contex
     throw new Error(`Insufficient balance: You need ₹${cost.toLocaleString("en-IN")}, but your available cash is ₹${(Number(userCheck.cashBalance) || 0).toLocaleString("en-IN")}`);
   }
 
-  // Atomic cash deduction
+  // 1. Atomic cash deduction
   const deductRes = await User.updateOne(
     { uid, cashBalance: { $gte: cost }, isFrozen: { $ne: true } },
     { $inc: { cashBalance: -cost } }
   );
-  if (deductRes.matchedCount === 0 || deductRes.modifiedCount === 0) {
-    throw new Error("Insufficient cash balance or account is frozen");
+  if (deductRes.modifiedCount !== 1) {
+    throw new Error("Insufficient funds or frozen");
   }
 
   const subData = {
     subId: "sub_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
     uid,
     requestedShares,
-    requestedLots,
+    requestedLots: lots,
     allocatedShares: 0,
     allocatedLots: 0,
     investedAmount: cost,
@@ -887,27 +890,27 @@ app.post('/api/subscribeIPO', authMiddleware, handleCallable(async (data, contex
     settled: false
   };
 
-  let pushRes;
+  // 2. Push subscription & increment totals
   try {
-    pushRes = await IPO.updateOne(
+    const pushRes = await IPO.updateOne(
       { _id: ipo._id, status: "open", "subscriptions.uid": { $ne: uid } },
       {
         $push: { subscriptions: subData },
         $inc: {
-          totalSubscribedLots: requestedLots,
+          totalSubscribedLots: lots,
           totalSubscribedShares: requestedShares,
           subscriptionCount: 1
         }
       }
     );
+
+    if (pushRes.modifiedCount !== 1) {
+      throw new Error("Subscription failed: IPO is no longer open or you have already subscribed");
+    }
   } catch (err) {
+    console.error(`[subscribeIPO rollback] Refunding ₹${cost} to uid=${uid} due to: ${err.message}`);
     await User.updateOne({ uid }, { $inc: { cashBalance: cost } });
     throw err;
-  }
-
-  if (pushRes.matchedCount === 0 || pushRes.modifiedCount === 0) {
-    await User.updateOne({ uid }, { $inc: { cashBalance: cost } });
-    throw new Error("Subscription failed: IPO is no longer open or you have already subscribed");
   }
 
   const updatedIpo = await IPO.findById(ipo._id, "totalSubscribedLots totalLots").lean();

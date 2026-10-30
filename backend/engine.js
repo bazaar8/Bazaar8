@@ -586,7 +586,7 @@ function startSimulationEngines() {
         if (tickCount % 10 === 0) { 
           cachedPriceHistory[ticker][now] = Number(newPrice.toFixed(2));
           const keys = Object.keys(cachedPriceHistory[ticker]);
-          if (keys.length > 7200) delete cachedPriceHistory[ticker][keys[0]]; 
+          if (keys.length > 500) delete cachedPriceHistory[ticker][keys[0]]; 
         }
       }
 
@@ -696,7 +696,7 @@ app.get("/api/leaderboard", (req, res) => {
 
 app.get("/api/history/:ticker", authMiddleware, (req, res) => {
   const ticker = req.params.ticker?.toUpperCase();
-  const limit = Math.min(parseInt(req.query.limit, 10) || 7200, 7200);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 500, 500);
   const historyObj = cachedPriceHistory[ticker] || {};
   const sortedTimestamps = Object.keys(historyObj).sort((a, b) => Number(a) - Number(b));
   const slicedTimestamps = sortedTimestamps.slice(-limit);
